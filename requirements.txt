@@ -1,0 +1,5 @@
+streamlit
+pretty_midi
+music21
+numpy
+pydub
