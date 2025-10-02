@@ -1,41 +1,67 @@
 # LofiSymphony
 
-A modern, fully customizable LoFi music generator with a beautiful web interface.
+LofiSymphony is a polished Streamlit experience for generating instant LoFi inspiration. Dial in your key, mood and groove, then export playable MIDI or WAV stems in seconds.
 
-## Features
+## ✨ Highlights
+- Sleek, neon-inspired Streamlit UI with responsive layout.
+- Genre-aware chord palettes, melodies and bass lines powered by `pretty_midi` and `music21`.
+- Humanised rhythms, drum grooves and optional vinyl texture overlay.
+- One-click MIDI export plus FluidSynth-powered audio rendering (when available).
+- Packaged for simple installation – ship it as a tool or embed in your workflow.
 
-- Choose key, scale, tempo, rhythm, type, feeling, and instruments
-- Modern GUI (Streamlit)
-- Jazz-inspired, genre-appropriate chord progressions
-- Humanized randomness and groove
-- Download MIDI or WAV (with vinyl crackle)
-- Instant audio preview
-- Easily expandable
+## 🚀 Installation
+Clone the repository (or install from a package index in the future) and install the project in editable mode. This pulls in every Python dependency automatically.
 
-## Quickstart
+```bash
+pip install -e .
+```
 
-1. Install requirements:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. (Optional for audio preview) Install FluidSynth and a SoundFont (e.g. FluidR3_GM.sf2).
-3. Run the app:
-   ```bash
-   streamlit run app.py
-   ```
-4. The app will open in your browser. Select options, click **Generate**, listen or download your LoFi track!
+> **Tip:** Add the optional audio extras to bundle a Python FluidSynth binding alongside the core dependencies:
+>
+> ```bash
+> pip install -e .[audio]
+> ```
 
----
+### System requirements for audio rendering
+To convert MIDI to audio you still need the `fluidsynth` binary and at least one General MIDI soundfont (e.g. `FluidR3_GM.sf2`). On Debian/Ubuntu:
 
-## Expansion ideas
+```bash
+sudo apt-get install fluidsynth fluid-soundfont-gm
+```
 
-- More moods and chord types
-- Custom drum kits and FX
-- Save/share playlists
-- AI-assisted melodies
+Place any custom soundfonts alongside the project or update the environment variable `LOFI_SYMPHONY_SOUNDFONT` to point to it.
 
----
+## 🧪 Running the app
+Launch the web UI with either the console entry point installed by the package or the classic Streamlit command:
 
-## Troubleshooting
+```bash
+# Via the packaged console script
+lofi-symphony
 
-- “Audio preview failed”: Please install FluidSynth and a GM soundfont.
+# or manually
+streamlit run lofi_symphony/app.py
+```
+
+The interface opens in your browser. Tweak the controls, hit **Generate track**, audition the WAV (if FluidSynth is available) and grab the downloadable assets.
+
+### Automated smoke test
+Continuous integration or local checks can exercise the Streamlit script without keeping a server running by invoking the bundled smoke test:
+
+```bash
+lofi-symphony --smoke-test
+```
+
+The command loads the Streamlit script in headless mode using `streamlit.testing`. If it exits with a non-zero status, inspect the printed component tree to diagnose the failure. When running the full server via `streamlit run`, remember to stop the process manually (e.g. with `Ctrl+C`) once you've finished testing, otherwise external tooling such as `timeout` will terminate it with exit code `124`.
+
+## 🛠️ Development
+- `src/lofi_symphony/generator.py` – MIDI creation and audio rendering utilities.
+- `src/lofi_symphony/app.py` – Streamlit UI.
+- `app.py` – lightweight launcher for local development.
+
+Pull requests are welcome! Share screenshots, new progressions, or improvements to the visual design.
+
+## ❓ Troubleshooting
+- **Audio preview unavailable** – confirm `fluidsynth` and a soundfont are installed, then restart the app.
+- **Missing dependencies** – ensure you ran `pip install -e .` (the editable install wires up the bundled requirements).
+
+Enjoy crafting mellow vibes with **LofiSymphony**. 🎧

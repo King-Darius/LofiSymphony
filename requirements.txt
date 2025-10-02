@@ -1,5 +1,6 @@
-streamlit
-pretty_midi
-music21
-numpy
-pydub
+streamlit>=1.32
+pretty_midi>=0.2.10
+music21>=8.3.0
+numpy>=1.23
+pydub>=0.25
+setuptools>=65
