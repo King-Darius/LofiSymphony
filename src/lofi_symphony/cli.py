@@ -13,6 +13,13 @@ def _app_path() -> Path:
     return Path(__file__).with_name("app.py")
 
 
+def _launch_streamlit(app_path: Path | None = None) -> None:
+    """Start the Streamlit runtime for the packaged app."""
+
+    target = app_path or _app_path()
+    bootstrap.run(str(target), "", [], flag_options={})
+
+
 def _run_smoke_test(timeout: float = 5.0) -> None:
     """Run a headless smoke test to ensure the app loads without errors."""
 
@@ -42,7 +49,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         _run_smoke_test()
         return
 
-    bootstrap.run(str(_app_path()), "", [], flag_options={})
+    _launch_streamlit()
 
 
 if __name__ == "__main__":  # pragma: no cover
