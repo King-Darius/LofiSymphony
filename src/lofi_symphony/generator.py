@@ -11,7 +11,7 @@ from typing import Iterable, List, Sequence
 
 import numpy as np
 import pretty_midi
-from music21 import chord, key as m21key
+from music21 import chord, key as m21key, pitch as m21pitch
 from pydub import AudioSegment
 from pydub.generators import WhiteNoise
 
@@ -68,9 +68,15 @@ DRUM_NOTE_MAP = {
 }
 
 
+def _pitch_to_pretty_name(pitch_obj: m21pitch.Pitch) -> str:
+    """Return a pretty_midi-compatible name for a music21 pitch."""
+
+    return pretty_midi.note_number_to_name(int(round(pitch_obj.midi)))
+
+
 def _get_chord_pitches(roman: str, musical_key: m21key.Key) -> List[str]:
     chord_obj = chord.Chord(musical_key.romanNumeral(roman).pitches)
-    return [p.nameWithOctave for p in chord_obj.pitches]
+    return [_pitch_to_pretty_name(p) for p in chord_obj.pitches]
 
 
 def _humanize(value: float, amount: float = 0.03) -> float:
@@ -135,9 +141,10 @@ def generate_lofi_midi(
             for bar in range(n_bars):
                 chord_roman = progression[bar % len(progression)]
                 root_note = _get_chord_pitches(chord_roman, key_obj)[0]
+                root_name = root_note.rstrip("0123456789")
                 note = pretty_midi.Note(
                     velocity=random.randint(55, 75),
-                    pitch=pretty_midi.note_name_to_number(root_note[:-1] + "2"),
+                    pitch=pretty_midi.note_name_to_number(f"{root_name}2"),
                     start=bar * 2 + _humanize(0),
                     end=bar * 2 + _humanize(1.6),
                 )
@@ -147,7 +154,9 @@ def generate_lofi_midi(
 
         if instrument_name in INSTRUMENT_PROGRAMS:
             inst = pretty_midi.Instrument(program=INSTRUMENT_PROGRAMS[instrument_name])
-            scale_notes = key_obj.getPitches()
+            scale_notes = [
+                _pitch_to_pretty_name(p).rstrip("0123456789") for p in key_obj.getPitches()
+            ]
             for bar in range(n_bars):
                 chord_roman = progression[bar % len(progression)]
                 chord_pitches = _get_chord_pitches(chord_roman, key_obj)
@@ -166,7 +175,7 @@ def generate_lofi_midi(
                         octave = random.choice([4, 5])
                         note = pretty_midi.Note(
                             velocity=random.randint(50, 75),
-                            pitch=pretty_midi.note_name_to_number(pitch_choice.name + str(octave)),
+                            pitch=pretty_midi.note_name_to_number(f"{pitch_choice}{octave}"),
                             start=bar * 2 + _humanize(beat * 0.5),
                             end=bar * 2 + _humanize(beat * 0.5 + 0.4),
                         )
