@@ -393,6 +393,18 @@ def _note_to_midi(note_name: str) -> int:
     return pretty_midi.note_name_to_number(note_name)
 
 
+def _update_timeline_cursor() -> None:
+    """Nudge the timeline cursor to the end of the current arrangement."""
+
+    timeline: Timeline = st.session_state.timeline
+    if not timeline.events:
+        st.session_state.keyboard_cursor = 0.0
+        return
+
+    max_end = max(event.start + event.duration for event in timeline.events)
+    st.session_state.keyboard_cursor = max_end
+
+
 def _ingest_midi_into_timeline(midi_payload: bytes) -> None:
     midi = pretty_midi.PrettyMIDI(io.BytesIO(midi_payload))
     events: list[TimelineEvent] = []
@@ -410,6 +422,7 @@ def _ingest_midi_into_timeline(midi_payload: bytes) -> None:
             )
     if events:
         st.session_state.timeline.extend(events)
+        _update_timeline_cursor()
 
 
 def _register_keyboard_note(note_name: str, tempo: int) -> None:
@@ -422,10 +435,12 @@ def _register_keyboard_note(note_name: str, tempo: int) -> None:
         beats = elapsed * tempo / 60.0
         event = TimelineEvent(start=beats, duration=0.5, pitch=pitch, velocity=velocity, instrument=instrument)
         st.session_state.timeline.add_event(event)
+        _update_timeline_cursor()
     else:
         cursor = st.session_state.keyboard_cursor
         event = TimelineEvent(start=cursor, duration=0.5, pitch=pitch, velocity=velocity, instrument=instrument)
         st.session_state.timeline.add_event(event)
+        _update_timeline_cursor()
         st.session_state.keyboard_cursor = cursor + 0.5
 
 
@@ -450,6 +465,7 @@ def _handle_midi_message(message: MidiMessage, tempo: int) -> None:
         instrument=instrument,
     )
     st.session_state.timeline.add_event(event)
+    _update_timeline_cursor()
 
 
 def _keyboard_block(tempo: int) -> None:
@@ -572,6 +588,47 @@ def _timeline_tab(settings: SessionSettings) -> None:
     st.subheader("Timeline editor", divider="rainbow")
     st.markdown("Tune takes, quantize and render your arrangement.")
 
+    import_json_col, import_midi_col = st.columns(2)
+    with import_json_col:
+        uploaded_timeline = st.file_uploader(
+            "Restore timeline from JSON",
+            type=["json"],
+            key="timeline-json-upload",
+            help="Load a timeline exported from LofiSymphony or another compatible tool.",
+        )
+        if uploaded_timeline is not None:
+            try:
+                payload = json.loads(uploaded_timeline.getvalue().decode("utf-8"))
+                events = [TimelineEvent.from_dict(event) for event in payload]
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                st.error(f"Unable to import timeline JSON: {exc}.")
+            else:
+                st.session_state.timeline = Timeline(events)
+                _update_timeline_cursor()
+                st.session_state.generated_midi = None
+                st.session_state.generated_audio = None
+                st.session_state.generator_metadata = None
+                st.session_state["timeline-json-upload"] = None
+                st.success("Timeline restored from JSON.")
+                st.rerun()
+
+    with import_midi_col:
+        uploaded_midi = st.file_uploader(
+            "Import clips from MIDI",
+            type=["mid", "midi"],
+            key="timeline-midi-upload",
+            help="Convert a MIDI file into timeline clips and merge it with the current session.",
+        )
+        if uploaded_midi is not None:
+            try:
+                _ingest_midi_into_timeline(uploaded_midi.getvalue())
+            except Exception as exc:  # pretty_midi raises a variety of exceptions
+                st.error(f"Unable to read MIDI file: {exc}.")
+            else:
+                st.session_state["timeline-midi-upload"] = None
+                st.success("MIDI file ingested into the timeline.")
+                st.rerun()
+
     if timeline.events:
         timeline_instruments = sorted({event.instrument for event in timeline.events})
         max_end = max(event.start + event.duration for event in timeline.events)
@@ -608,6 +665,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
     with col2:
         if st.button("Clear timeline"):
             st.session_state.timeline = Timeline()
+            _update_timeline_cursor()
             st.rerun()
     with col3:
         if st.button("Duplicate last bar") and timeline.events:
@@ -623,6 +681,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
                 for event in timeline.events
             ]
             st.session_state.timeline.extend(new_events)
+            _update_timeline_cursor()
             st.rerun()
 
     st.plotly_chart(_timeline_plot(st.session_state.timeline), use_container_width=True)
