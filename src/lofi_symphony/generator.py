@@ -126,12 +126,16 @@ def generate_lofi_midi(
     mood: str = "Chill",
     instruments: Sequence[str] | None = None,
     n_bars: int = 8,
+    progression: Sequence[str] | None = None,
 ) -> io.BytesIO:
     """Generate a LoFi MIDI track and return the raw bytes."""
 
     pm = pretty_midi.PrettyMIDI(initial_tempo=tempo)
     key_obj = m21key.Key(key, scale)
-    progression = random.choice(TYPE_PROGRESSIONS.get(lofi_type, TYPE_PROGRESSIONS["Chillhop"]))
+    if progression is None:
+        progression_sequence = random.choice(TYPE_PROGRESSIONS.get(lofi_type, TYPE_PROGRESSIONS["Chillhop"]))
+    else:
+        progression_sequence = list(progression)
 
     selected_instruments: Iterable[str] = instruments or AVAILABLE_INSTRUMENTS
 
@@ -139,7 +143,7 @@ def generate_lofi_midi(
         if instrument_name == "Bass":
             inst = pretty_midi.Instrument(program=INSTRUMENT_PROGRAMS["Bass"])
             for bar in range(n_bars):
-                chord_roman = progression[bar % len(progression)]
+                chord_roman = progression_sequence[bar % len(progression_sequence)]
                 root_note = _get_chord_pitches(chord_roman, key_obj)[0]
                 root_name = root_note.rstrip("0123456789")
                 note = pretty_midi.Note(
@@ -158,7 +162,7 @@ def generate_lofi_midi(
                 _pitch_to_pretty_name(p).rstrip("0123456789") for p in key_obj.getPitches()
             ]
             for bar in range(n_bars):
-                chord_roman = progression[bar % len(progression)]
+                chord_roman = progression_sequence[bar % len(progression_sequence)]
                 chord_pitches = _get_chord_pitches(chord_roman, key_obj)
                 for pitch_name in chord_pitches:
                     note = pretty_midi.Note(
