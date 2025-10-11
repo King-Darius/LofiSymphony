@@ -445,6 +445,11 @@ def _register_keyboard_note(note_name: str, tempo: int) -> None:
 
 
 def _handle_midi_message(message: MidiMessage, tempo: int) -> None:
+    if not st.session_state.recording:
+        if message.velocity <= 0:
+            st.session_state.midi_note_starts.pop(message.note, None)
+        return
+
     if message.velocity > 0:
         st.session_state.midi_note_starts[message.note] = message.timestamp
         return
