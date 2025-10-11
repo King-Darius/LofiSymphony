@@ -6,6 +6,7 @@ LofiSymphony is a polished Streamlit experience for generating instant LoFi insp
 - Sleek, neon-inspired Streamlit UI with responsive layout.
 - Real-time performance desk featuring an on-screen keyboard, USB MIDI capture and take recorder.
 - Arrange sections in a tactile timeline editor, quantise grooves and export stems instantly.
+- Import MIDI or previously exported JSON timelines directly into the arranger.
 - Optional Audiocraft MusicGen integration for text-to-music ideas and MIDI/MusicGen hybrid renders.
 - Genre-aware chord palettes, melodies and bass lines powered by `pretty_midi` and `music21`.
 - Humanised rhythms, drum grooves and optional vinyl texture overlay.
@@ -49,6 +50,9 @@ streamlit run lofi_symphony/app.py
 ```
 
 The interface opens in your browser. Use the **Generator** tab for structured MIDI ideas, **Performance** for live capture, and **Timeline** to polish or export the arrangement. Hit **Generate progression** to seed the session, improvise with the keyboard or a USB MIDI controller, then audition and download the resulting stems.
+
+### Importing existing material
+Bring in ideas you've sketched elsewhere by using the new import controls at the top of the **Timeline** tab. Upload a JSON file that was exported from LofiSymphony to restore the full arrangement, or drop in a MIDI file to merge its clips with your current session.
 
 ### Automated smoke test
 Continuous integration or local checks can exercise the Streamlit script without keeping a server running by invoking the bundled smoke test:
