@@ -4,6 +4,9 @@ LofiSymphony is a polished Streamlit experience for generating instant LoFi insp
 
 ## ✨ Highlights
 - Sleek, neon-inspired Streamlit UI with responsive layout.
+- Real-time performance desk featuring an on-screen keyboard, USB MIDI capture and take recorder.
+- Arrange sections in a tactile timeline editor, quantise grooves and export stems instantly.
+- Optional Audiocraft MusicGen integration for text-to-music ideas and MIDI/MusicGen hybrid renders.
 - Genre-aware chord palettes, melodies and bass lines powered by `pretty_midi` and `music21`.
 - Humanised rhythms, drum grooves and optional vinyl texture overlay.
 - One-click MIDI export plus FluidSynth-powered audio rendering (when available).
@@ -31,6 +34,9 @@ sudo apt-get install fluidsynth fluid-soundfont-gm
 
 Place any custom soundfonts alongside the project or update the environment variable `LOFI_SYMPHONY_SOUNDFONT` to point to it.
 
+### Audiocraft (MusicGen) support
+MusicGen generation requires `audiocraft`, `torch` and `torchaudio`. CPU inference works, though a GPU dramatically reduces render time. Install CUDA-enabled PyTorch if you plan to use a GPU. If these packages are missing, the UI will gracefully offer installation hints instead of failing.
+
 ## 🧪 Running the app
 Launch the web UI with either the console entry point installed by the package or the classic Streamlit command:
 
@@ -42,7 +48,7 @@ lofi-symphony
 streamlit run lofi_symphony/app.py
 ```
 
-The interface opens in your browser. Tweak the controls, hit **Generate track**, audition the WAV (if FluidSynth is available) and grab the downloadable assets.
+The interface opens in your browser. Use the **Generator** tab for structured MIDI ideas, **Performance** for live capture, and **Timeline** to polish or export the arrangement. Hit **Generate progression** to seed the session, improvise with the keyboard or a USB MIDI controller, then audition and download the resulting stems.
 
 ### Automated smoke test
 Continuous integration or local checks can exercise the Streamlit script without keeping a server running by invoking the bundled smoke test:
