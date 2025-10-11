@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+import random
 import time
-from typing import Sequence
+from dataclasses import dataclass
+from typing import Any, Sequence
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -18,7 +20,14 @@ from .audiocraft_integration import (
     generate_musicgen_backing,
     render_musicgen,
 )
-from .generator import AVAILABLE_INSTRUMENTS, MOOD_TEMPO, TYPE_INSTRUMENTS, generate_lofi_midi, midi_to_audio
+from .generator import (
+    AVAILABLE_INSTRUMENTS,
+    MOOD_TEMPO,
+    TYPE_INSTRUMENTS,
+    TYPE_PROGRESSIONS,
+    generate_lofi_midi,
+    midi_to_audio,
+)
 from .midi_input import MidiBackendUnavailable, MidiInputManager, MidiMessage
 from .timeline import Timeline, TimelineEvent, dataframe_for_display
 
@@ -49,6 +58,25 @@ KEYBOARD_NOTES = [
     "A#4",
     "B4",
 ]
+
+
+@dataclass(frozen=True)
+class SessionSettings:
+    """Bundle the musical DNA of the active session for UI consumption."""
+
+    key: str
+    scale: str
+    palette: str
+    mood: str
+    tempo: int
+    rhythm: str
+    instruments: Sequence[str]
+
+    def tonality(self) -> str:
+        return f"{self.key} {self.scale.title()}"
+
+    def instruments_label(self) -> str:
+        return ", ".join(self.instruments) if self.instruments else "None"
 
 
 def _render_css() -> None:
@@ -125,6 +153,86 @@ def _render_css() -> None:
         border: 1px solid rgba(148, 163, 184, 0.18);
         box-shadow: inset 0 0 20px rgba(15, 23, 42, 0.35);
     }
+    .status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .status-card {
+        padding: 1.1rem 1.25rem;
+        border-radius: 18px;
+        background: linear-gradient(155deg, rgba(30, 41, 59, 0.92), rgba(17, 24, 39, 0.88));
+        border: 1px solid rgba(168, 85, 247, 0.22);
+        box-shadow: 0 18px 32px rgba(15, 23, 42, 0.35);
+    }
+    .status-card h4 {
+        margin: 0;
+        font-size: 0.95rem;
+        letter-spacing: 0.02em;
+        color: #cbd5f5;
+        text-transform: uppercase;
+    }
+    .status-card .status-value {
+        font-size: 1.6rem;
+        margin-top: 0.35rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .status-card .status-footnote {
+        margin-top: 0.45rem;
+        color: #94a3b8;
+        font-size: 0.85rem;
+    }
+    .progression-card {
+        padding: 1.25rem;
+        border-radius: 20px;
+        background: linear-gradient(140deg, rgba(99, 102, 241, 0.12), rgba(168, 85, 247, 0.08));
+        border: 1px solid rgba(99, 102, 241, 0.35);
+        margin-bottom: 1rem;
+    }
+    .progression-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+    .progression-title {
+        font-weight: 600;
+        color: #f5f3ff;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+    }
+    .progression-meta {
+        font-size: 0.85rem;
+        color: #bfdbfe;
+    }
+    .progression-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .progression-chip {
+        padding: 0.45rem 0.75rem;
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        font-weight: 600;
+        color: #e2e8f0;
+        letter-spacing: 0.03em;
+    }
+    .instrument-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(14, 116, 144, 0.3);
+        color: #cffafe;
+        font-size: 0.8rem;
+    }
     </style>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
@@ -141,6 +249,69 @@ def _render_header() -> None:
                 and arrange your story on a tactile timeline. Render instant audiocraft previews or export
                 polished stems ready for your DAW.
             </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_session_overview(settings: SessionSettings) -> None:
+    timeline: Timeline = st.session_state.timeline
+    total_events = len(timeline.events)
+    timeline_instruments = sorted({event.instrument for event in timeline.events})
+    max_end = max((event.start + event.duration) for event in timeline.events) if timeline.events else 0.0
+
+    st.markdown(
+        f"""
+        <div class="status-grid">
+            <div class="status-card">
+                <h4>Tonality</h4>
+                <div class="status-value">{settings.tonality()}</div>
+                <div class="status-footnote">Mood • {settings.mood}</div>
+            </div>
+            <div class="status-card">
+                <h4>Tempo</h4>
+                <div class="status-value">{settings.tempo} BPM</div>
+                <div class="status-footnote">Groove • {settings.rhythm}</div>
+            </div>
+            <div class="status-card">
+                <h4>Palette</h4>
+                <div class="status-value">{settings.palette}</div>
+                <div class="status-footnote">Instruments • {settings.instruments_label()}</div>
+            </div>
+            <div class="status-card">
+                <h4>Timeline</h4>
+                <div class="status-value">{total_events} clips</div>
+                <div class="status-footnote">{len(timeline_instruments)} instruments • {max_end:.1f} beats</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_progression_summary(metadata: dict[str, Any]) -> None:
+    chords: Sequence[str] = metadata.get("progression", [])
+    chord_html = "".join(f"<span class='progression-chip'>{roman}</span>" for roman in chords)
+    palette = metadata.get("palette", "")
+    mood = metadata.get("mood", "")
+    tempo = metadata.get("tempo", 0)
+    tonality = f"{metadata.get('key', '')} {str(metadata.get('scale', '')).title()}".strip()
+    instrument_tags = metadata.get("instruments", [])
+    tags_html = "".join(f"<span class='instrument-tag'>🎚️ {name}</span>" for name in instrument_tags)
+
+    st.markdown(
+        f"""
+        <div class="progression-card">
+            <div class="progression-header">
+                <span class="progression-title">Latest progression</span>
+                <span class="progression-meta">{tonality} • {tempo} BPM • {mood}</span>
+            </div>
+            <div class="progression-chips">{chord_html}</div>
+            <div style="margin-top: 0.9rem; display: flex; flex-wrap: wrap; gap: 0.4rem;">
+                <span class="progression-meta">Palette • {palette}</span>
+                {tags_html}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -167,9 +338,17 @@ def _initialise_state() -> None:
         st.session_state.midi_note_starts = {}
     if "record_start" not in st.session_state:
         st.session_state.record_start = 0.0
+    if "generated_midi" not in st.session_state:
+        st.session_state.generated_midi = None
+    if "generated_audio" not in st.session_state:
+        st.session_state.generated_audio = None
+    if "generator_metadata" not in st.session_state:
+        st.session_state.generator_metadata = None
+    if "musicgen_path" not in st.session_state:
+        st.session_state.musicgen_path = None
 
 
-def _settings_panel() -> tuple[str, str, str, str, int, str, Sequence[str]]:
+def _settings_panel() -> SessionSettings:
     st.sidebar.markdown("## Session DNA")
     selected_key = st.sidebar.selectbox("Key", ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"], index=0)
     selected_scale = st.sidebar.selectbox("Scale/Mode", ["minor", "major", "dorian", "mixolydian"], index=0)
@@ -199,14 +378,14 @@ def _settings_panel() -> tuple[str, str, str, str, int, str, Sequence[str]]:
         unsafe_allow_html=True,
     )
 
-    return (
-        selected_key,
-        selected_scale,
-        selected_type,
-        selected_mood,
-        selected_tempo,
-        selected_rhythm,
-        selected_instruments,
+    return SessionSettings(
+        key=selected_key,
+        scale=selected_scale,
+        palette=selected_type,
+        mood=selected_mood,
+        tempo=selected_tempo,
+        rhythm=selected_rhythm,
+        instruments=selected_instruments,
     )
 
 
@@ -385,13 +564,31 @@ def _timeline_plot(timeline: Timeline) -> go.Figure:
     return fig
 
 
-def _timeline_tab(settings: tuple[str, str, str, str, int, str, Sequence[str]]) -> None:
-    tempo = settings[4]
+def _timeline_tab(settings: SessionSettings) -> None:
+    tempo = settings.tempo
     timeline: Timeline = st.session_state.timeline
 
     st.markdown("<div class='lofi-card'>", unsafe_allow_html=True)
     st.subheader("Timeline editor", divider="rainbow")
     st.markdown("Tune takes, quantize and render your arrangement.")
+
+    if timeline.events:
+        timeline_instruments = sorted({event.instrument for event in timeline.events})
+        max_end = max(event.start + event.duration for event in timeline.events)
+        st.markdown(
+            f"""
+            <div class="progression-card" style="margin-top: 0.75rem;">
+                <div class="progression-header">
+                    <span class="progression-title">Session timeline</span>
+                    <span class="progression-meta">{len(timeline.events)} clips • {max_end:.1f} beats</span>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                    {''.join(f"<span class='instrument-tag'>🎚️ {name}</span>" for name in timeline_instruments)}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     display_df = dataframe_for_display(timeline)
     with st.form("timeline-editor-form"):
@@ -463,8 +660,8 @@ def _timeline_tab(settings: tuple[str, str, str, str, int, str, Sequence[str]]) 
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _performance_tab(settings: tuple[str, str, str, str, int, str, Sequence[str]]) -> None:
-    tempo = settings[4]
+def _performance_tab(settings: SessionSettings) -> None:
+    tempo = settings.tempo
     st.markdown("<div class='lofi-card'>", unsafe_allow_html=True)
     st.subheader("Performance desk", divider="rainbow")
     _recording_controls(tempo)
@@ -475,15 +672,26 @@ def _performance_tab(settings: tuple[str, str, str, str, int, str, Sequence[str]
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _generator_tab(settings: tuple[str, str, str, str, int, str, Sequence[str]]) -> None:
-    (selected_key, selected_scale, selected_type, selected_mood, selected_tempo, selected_rhythm, selected_instruments) = settings
+def _generator_tab(settings: SessionSettings) -> None:
+    selected_key = settings.key
+    selected_scale = settings.scale
+    selected_type = settings.palette
+    selected_mood = settings.mood
+    selected_tempo = settings.tempo
+    selected_rhythm = settings.rhythm
+    selected_instruments = settings.instruments
     st.markdown("<div class='lofi-card'>", unsafe_allow_html=True)
     st.subheader("AI-assisted ideas", divider="rainbow")
 
-    col1, col2 = st.columns([0.6, 0.4])
+    st.caption("Pair curated MIDI seeds with Audiocraft layers to sketch tracks in minutes.")
+
+    col1, col2 = st.columns([0.58, 0.42])
     with col1:
         st.markdown("### Generate MIDI scaffold")
-        if st.button("🎶 Generate progression"):
+        st.caption("Roll harmonic DNA tailored to your palette and drop it straight on the timeline.")
+        if st.button("🎶 Generate progression", use_container_width=True):
+            progression_pool = TYPE_PROGRESSIONS.get(selected_type, TYPE_PROGRESSIONS["Chillhop"])
+            progression_choice = random.choice(progression_pool)
             midi_bytes = generate_lofi_midi(
                 key=selected_key,
                 scale=selected_scale,
@@ -492,51 +700,121 @@ def _generator_tab(settings: tuple[str, str, str, str, int, str, Sequence[str]])
                 rhythm=selected_rhythm,
                 mood=selected_mood,
                 instruments=selected_instruments,
+                progression=progression_choice,
             )
             midi_payload = midi_bytes.getvalue()
             st.session_state.generated_midi = midi_payload
+            st.session_state.generator_metadata = {
+                "progression": progression_choice,
+                "palette": selected_type,
+                "mood": selected_mood,
+                "tempo": selected_tempo,
+                "key": selected_key,
+                "scale": selected_scale,
+                "instruments": list(selected_instruments),
+            }
             _ingest_midi_into_timeline(midi_payload)
             st.session_state.timeline.quantize(0.25)
             audio_segment = midi_to_audio(io.BytesIO(midi_payload))
             audio_buffer = io.BytesIO()
             audio_segment.export(audio_buffer, format="wav")
             audio_buffer.seek(0)
-            st.audio(audio_buffer)
+            st.session_state.generated_audio = audio_buffer.getvalue()
+            st.toast("MIDI idea injected into the timeline ✨")
+
+        metadata = st.session_state.generator_metadata
+        if metadata:
+            _render_progression_summary(metadata)
+
+        audio_bytes = st.session_state.generated_audio
+        midi_bytes_payload = st.session_state.generated_midi
+        if audio_bytes:
+            st.audio(io.BytesIO(audio_bytes))
             st.download_button(
                 "Download generated WAV",
-                data=audio_buffer.getvalue(),
+                data=audio_bytes,
                 file_name="lofi_idea.wav",
                 mime="audio/wav",
+                key="download-generated-wav",
             )
-            st.success("Fresh MIDI idea generated and added to the timeline.")
+        if midi_bytes_payload:
+            st.download_button(
+                "Download generated MIDI",
+                data=midi_bytes_payload,
+                file_name="lofi_idea.mid",
+                mime="audio/midi",
+                key="download-generated-midi",
+            )
+
     with col2:
         st.markdown("### MusicGen preview")
-        prompt = st.text_area("Prompt", value="A dusty lofi beat with warm chords and vinyl crackle")
-        duration = st.slider("Duration", min_value=8.0, max_value=30.0, value=12.0, step=1.0)
-        if st.button("✨ Render with MusicGen"):
+        st.caption("Send evocative prompts to craft shimmering textures and atmospheres.")
+        prompt = st.text_area(
+            "Prompt",
+            value="A dusty lofi beat with warm chords and vinyl crackle",
+            key="musicgen-prompt",
+        )
+        duration = st.slider(
+            "Duration",
+            min_value=8.0,
+            max_value=30.0,
+            value=12.0,
+            step=1.0,
+            key="musicgen-duration",
+        )
+        if st.button("✨ Render with MusicGen", use_container_width=True):
             try:
-                audio_path = render_musicgen(AudiocraftSettings(prompt=prompt, duration=duration))
-                st.audio(str(audio_path))
+                with st.spinner("Rendering with Audiocraft..."):
+                    audio_path = render_musicgen(AudiocraftSettings(prompt=prompt, duration=duration))
                 st.session_state.musicgen_path = audio_path
+                st.success("MusicGen render ready for audition.")
             except AudiocraftUnavailable as exc:
                 st.warning(str(exc))
 
+        musicgen_path = st.session_state.musicgen_path
+        if musicgen_path:
+            st.audio(str(musicgen_path))
+            try:
+                with open(musicgen_path, "rb") as handle:
+                    musicgen_bytes = handle.read()
+                st.download_button(
+                    "Download MusicGen WAV",
+                    data=musicgen_bytes,
+                    file_name="musicgen_preview.wav",
+                    mime="audio/wav",
+                    key="download-musicgen-wav",
+                )
+            except FileNotFoundError:
+                st.info("Generated preview not found on disk – rerun to regenerate.")
+
     st.divider()
     st.markdown("### Blend MusicGen with MIDI")
+    st.caption("Fuse symbolic MIDI with generative audio for instant hybrid stems.")
     with st.form("musicgen-blend"):
-        blend_prompt = st.text_input("Blend prompt", value="Lo-fi beat with mellow keys and gentle sidechain pumping")
+        blend_prompt = st.text_input(
+            "Blend prompt",
+            value="Lo-fi beat with mellow keys and gentle sidechain pumping",
+        )
         submitted = st.form_submit_button("Create hybrid render")
         if submitted:
             try:
-                blended = generate_musicgen_backing(
-                    prompt=blend_prompt,
-                    key=selected_key,
-                    scale=selected_scale,
-                    tempo=selected_tempo,
-                    instruments=selected_instruments,
-                )
+                with st.spinner("Sculpting hybrid stem..."):
+                    blended = generate_musicgen_backing(
+                        prompt=blend_prompt,
+                        key=selected_key,
+                        scale=selected_scale,
+                        tempo=selected_tempo,
+                        instruments=selected_instruments,
+                    )
                 st.audio(str(blended))
-                st.download_button("Download blend", data=open(blended, "rb"), file_name="musicgen_blend.wav", mime="audio/wav")
+                with open(blended, "rb") as handle:
+                    blend_bytes = handle.read()
+                st.download_button(
+                    "Download blend",
+                    data=blend_bytes,
+                    file_name="musicgen_blend.wav",
+                    mime="audio/wav",
+                )
             except AudiocraftUnavailable as exc:
                 st.warning(str(exc))
 
@@ -551,6 +829,7 @@ def main() -> None:
     _render_header()
 
     settings = _settings_panel()
+    _render_session_overview(settings)
 
     generator_tab, performance_tab, timeline_tab = st.tabs(["Generator", "Performance", "Timeline"])
     with generator_tab:
