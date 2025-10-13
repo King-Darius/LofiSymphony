@@ -7,6 +7,7 @@ import os
 import random
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from typing import Iterable, List, Sequence
 
 import numpy as np
@@ -17,11 +18,13 @@ from pydub.generators import WhiteNoise
 
 __all__ = [
     "generate_lofi_midi",
+    "generate_structured_song",
     "midi_to_audio",
     "TYPE_PROGRESSIONS",
     "TYPE_INSTRUMENTS",
     "MOOD_TEMPO",
     "AVAILABLE_INSTRUMENTS",
+    "SectionArrangement",
 ]
 
 TYPE_PROGRESSIONS = {
@@ -66,6 +69,138 @@ DRUM_NOTE_MAP = {
     "snare": 38,
     "hat_closed": 42,
 }
+
+
+@dataclass(frozen=True)
+class SectionArrangement:
+    """Descriptor for an arranged section rendered by :func:`generate_structured_song`."""
+
+    name: str
+    start_bar: int
+    n_bars: int
+    progression: Sequence[str]
+    instruments: Sequence[str]
+    has_hook: bool
+    hook_motif: Sequence[str]
+
+    def to_dict(self) -> dict[str, Sequence[str] | int | str | bool]:
+        return {
+            "name": self.name,
+            "start_bar": self.start_bar,
+            "n_bars": self.n_bars,
+            "progression": list(self.progression),
+            "instruments": list(self.instruments),
+            "has_hook": self.has_hook,
+            "hook_motif": list(self.hook_motif),
+        }
+
+
+def _dedupe_instruments(instruments: Sequence[str]) -> List[str]:
+    """Return instruments filtered to project availability preserving order."""
+
+    seen: set[str] = set()
+    filtered: List[str] = []
+    for name in instruments:
+        if name not in AVAILABLE_INSTRUMENTS:
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        filtered.append(name)
+    return filtered
+
+
+def _scale_note_names(musical_key: m21key.Key) -> List[str]:
+    names = [_pitch_to_pretty_name(p).rstrip("0123456789") for p in musical_key.getPitches()]
+    return names or ["C", "E", "G", "Bb"]
+
+
+def _generate_hook_motif(musical_key: m21key.Key, *, octave: int = 5) -> List[str]:
+    """Create a short melodic motif highlighting the tonic triad."""
+
+    scale_notes = _scale_note_names(musical_key)
+    start_index = random.randint(0, len(scale_notes) - 1)
+    pattern = [0, 2, 4, 2]
+    motif: List[str] = []
+    for offset in pattern:
+        degree = (start_index + offset) % len(scale_notes)
+        octave_offset = (start_index + offset) // len(scale_notes)
+        note = f"{scale_notes[degree]}{octave + octave_offset}"
+        motif.append(note)
+    return motif
+
+
+@dataclass(frozen=True)
+class _SectionBlueprint:
+    name: str
+    n_bars: int
+    progression: Sequence[str]
+    instruments: Sequence[str]
+    has_hook: bool = False
+
+
+def _build_arrangement_plan(
+    *,
+    lofi_type: str,
+    base_instruments: Sequence[str],
+    progression_pool: Sequence[Sequence[str]],
+) -> List[_SectionBlueprint]:
+    """Generate a high-level arrangement plan given palette preferences."""
+
+    if not progression_pool:
+        progression_pool = TYPE_PROGRESSIONS["Chillhop"]
+
+    primary = random.choice(progression_pool)
+    secondary_candidates = [prog for prog in progression_pool if prog != primary]
+    secondary = random.choice(secondary_candidates or [primary])
+
+    base_palette = _dedupe_instruments(base_instruments) or TYPE_INSTRUMENTS.get(lofi_type, ["Piano", "Bass", "Drums"])
+
+    intro_palette = _dedupe_instruments([inst for inst in base_palette if inst != "Drums"] + (["FX"] if "FX" in AVAILABLE_INSTRUMENTS else []))
+    if not intro_palette:
+        intro_palette = base_palette
+
+    chorus_palette = _dedupe_instruments(list(base_palette) + ["Synth", "Drums"])
+    hook_palette = _dedupe_instruments(["Synth", "Drums", "FX"] + list(base_palette))
+    outro_palette = _dedupe_instruments([inst for inst in base_palette if inst != "Drums"] + (["FX"] if "FX" in AVAILABLE_INSTRUMENTS else []))
+    if not outro_palette:
+        outro_palette = base_palette
+
+    return [
+        _SectionBlueprint(name="Intro", n_bars=4, progression=primary, instruments=intro_palette),
+        _SectionBlueprint(name="Verse", n_bars=8, progression=primary, instruments=base_palette),
+        _SectionBlueprint(name="Chorus", n_bars=8, progression=secondary, instruments=chorus_palette, has_hook=True),
+        _SectionBlueprint(name="Verse 2", n_bars=8, progression=primary, instruments=base_palette),
+        _SectionBlueprint(name="Hook", n_bars=4, progression=secondary, instruments=hook_palette, has_hook=True),
+        _SectionBlueprint(name="Outro", n_bars=4, progression=primary, instruments=outro_palette),
+    ]
+
+
+def _apply_hook_layer(pm: pretty_midi.PrettyMIDI, n_bars: int, motif: Sequence[str]) -> None:
+    if not motif:
+        return
+
+    program = INSTRUMENT_PROGRAMS.get("Synth", 81)
+    hook_instrument = pretty_midi.Instrument(program=program, name="Hook Lead")
+    bar_duration = 2.0
+    step_duration = max(0.25, bar_duration / max(len(motif), 1))
+
+    for bar in range(n_bars):
+        for idx, note_name in enumerate(motif):
+            start = bar * bar_duration + idx * step_duration
+            start = max(0.0, _humanize(start, amount=0.02))
+            end = start + step_duration * 0.85
+            pitch = pretty_midi.note_name_to_number(note_name)
+            hook_instrument.notes.append(
+                pretty_midi.Note(
+                    velocity=random.randint(70, 88),
+                    pitch=pitch,
+                    start=start,
+                    end=end,
+                )
+            )
+
+    pm.instruments.append(hook_instrument)
 
 
 def _pitch_to_pretty_name(pitch_obj: m21pitch.Pitch) -> str:
@@ -194,6 +329,74 @@ def generate_lofi_midi(
     pm.write(midi_bytes)
     midi_bytes.seek(0)
     return midi_bytes
+
+
+def generate_structured_song(
+    *,
+    key: str = "C",
+    scale: str = "minor",
+    tempo: int = 72,
+    lofi_type: str = "Chillhop",
+    rhythm: str = "Straight",
+    mood: str = "Chill",
+    instruments: Sequence[str] | None = None,
+) -> tuple[io.BytesIO, List[SectionArrangement]]:
+    """Generate a multi-section arrangement with an optional hook motif."""
+
+    progression_pool = TYPE_PROGRESSIONS.get(lofi_type, TYPE_PROGRESSIONS["Chillhop"])
+    base_instruments = instruments or TYPE_INSTRUMENTS.get(lofi_type, AVAILABLE_INSTRUMENTS)
+    key_obj = m21key.Key(key, scale)
+    plan = _build_arrangement_plan(
+        lofi_type=lofi_type,
+        base_instruments=base_instruments,
+        progression_pool=progression_pool,
+    )
+    hook_motif = _generate_hook_motif(key_obj)
+    master_midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
+    sections: List[SectionArrangement] = []
+    bar_duration = 2.0
+    current_bar = 0
+
+    for section in plan:
+        section_midi_bytes = generate_lofi_midi(
+            key=key,
+            scale=scale,
+            tempo=tempo,
+            lofi_type=lofi_type,
+            rhythm=rhythm,
+            mood=mood,
+            instruments=section.instruments,
+            n_bars=section.n_bars,
+            progression=section.progression,
+        )
+        section_pm = pretty_midi.PrettyMIDI(io.BytesIO(section_midi_bytes.getvalue()))
+        if section.has_hook:
+            _apply_hook_layer(section_pm, section.n_bars, hook_motif)
+
+        for instrument in section_pm.instruments:
+            for note in instrument.notes:
+                note.start += current_bar * bar_duration
+                note.end += current_bar * bar_duration
+        master_midi.instruments.extend(section_pm.instruments)
+
+        sections.append(
+            SectionArrangement(
+                name=section.name,
+                start_bar=current_bar,
+                n_bars=section.n_bars,
+                progression=section.progression,
+                instruments=section.instruments,
+                has_hook=section.has_hook,
+                hook_motif=hook_motif if section.has_hook else [],
+            )
+        )
+
+        current_bar += section.n_bars
+
+    midi_bytes = io.BytesIO()
+    master_midi.write(midi_bytes)
+    midi_bytes.seek(0)
+    return midi_bytes, sections
 
 
 def midi_to_audio(midi_bytes: io.BytesIO, *, soundfont: str | None = None, add_vinyl_fx: bool = True) -> AudioSegment:
