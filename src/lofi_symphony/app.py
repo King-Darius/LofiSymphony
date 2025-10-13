@@ -25,7 +25,9 @@ from .generator import (
     MOOD_TEMPO,
     TYPE_INSTRUMENTS,
     TYPE_PROGRESSIONS,
+    SectionArrangement,
     generate_lofi_midi,
+    generate_structured_song,
     midi_to_audio,
 )
 from .midi_input import MidiBackendUnavailable, MidiInputManager, MidiMessage
@@ -191,6 +193,38 @@ def _render_css() -> None:
         border: 1px solid rgba(99, 102, 241, 0.35);
         margin-bottom: 1rem;
     }
+    .arrangement-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.75rem;
+    }
+    .arrangement-table th, .arrangement-table td {
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+        font-size: 0.85rem;
+        color: #e2e8f0;
+    }
+    .arrangement-table th {
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.05em;
+        color: #94a3b8;
+    }
+    .arrangement-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.3rem 0.65rem;
+        border-radius: 999px;
+        background: rgba(59, 130, 246, 0.25);
+        color: #bfdbfe;
+        font-size: 0.75rem;
+    }
+    .arrangement-motif {
+        margin-top: 0.9rem;
+        font-size: 0.85rem;
+        color: #cbd5f5;
+    }
     .progression-header {
         display: flex;
         justify-content: space-between;
@@ -318,6 +352,80 @@ def _render_progression_summary(metadata: dict[str, Any]) -> None:
     )
 
 
+def _render_arrangement_overview(sections: Sequence[dict[str, Any]]) -> None:
+    if not sections:
+        return
+
+    rows: list[str] = []
+    for section in sections:
+        start_bar = int(section.get("start_bar", 0)) + 1
+        length = int(section.get("n_bars", 0))
+        end_bar = start_bar + max(length, 1) - 1
+        chord_html = " – ".join(section.get("progression", []))
+        instruments = ", ".join(section.get("instruments", []))
+        hook_badge = (
+            "<span class='arrangement-badge'>🎣 Hook</span>" if section.get("has_hook") else "—"
+        )
+        rows.append(
+            """
+            <tr>
+                <td>{name}</td>
+                <td>Bars {start}-{end}</td>
+                <td>{chords}</td>
+                <td>{instruments}</td>
+                <td>{badge}</td>
+            </tr>
+            """.format(
+                name=section.get("name", "Section"),
+                start=start_bar,
+                end=end_bar,
+                chords=chord_html,
+                instruments=instruments or "—",
+                badge=hook_badge,
+            )
+        )
+
+    table_html = """
+        <table class='arrangement-table'>
+            <thead>
+                <tr>
+                    <th>Section</th>
+                    <th>Range</th>
+                    <th>Progression</th>
+                    <th>Instruments</th>
+                    <th>Highlights</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </table>
+    """.format(rows="".join(rows))
+
+    hook_motif = next(
+        (section.get("hook_motif", []) for section in sections if section.get("has_hook") and section.get("hook_motif")),
+        [],
+    )
+    motif_html = "".join(f"<span class='progression-chip'>{note}</span>" for note in hook_motif)
+    motif_block = (
+        f"<div class='arrangement-motif'>Hook motif • <div class='progression-chips'>{motif_html}</div></div>"
+        if motif_html
+        else ""
+    )
+
+    st.markdown(
+        f"""
+        <div class='progression-card'>
+            <div class='progression-header'>
+                <span class='progression-title'>Song arrangement</span>
+                <span class='progression-meta'>Automated verse/chorus layout</span>
+            </div>
+            {table_html}
+            {motif_block}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _initialise_state() -> None:
     if "timeline" not in st.session_state:
         st.session_state.timeline = Timeline()
@@ -346,6 +454,8 @@ def _initialise_state() -> None:
         st.session_state.generator_metadata = None
     if "musicgen_path" not in st.session_state:
         st.session_state.musicgen_path = None
+    if "arrangement_sections" not in st.session_state:
+        st.session_state.arrangement_sections = None
 
 
 def _settings_panel() -> SessionSettings:
@@ -613,6 +723,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
                 st.session_state.generated_midi = None
                 st.session_state.generated_audio = None
                 st.session_state.generator_metadata = None
+                st.session_state.arrangement_sections = None
                 st.session_state["timeline-json-upload"] = None
                 st.success("Timeline restored from JSON.")
                 st.rerun()
@@ -631,6 +742,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
                 st.error(f"Unable to read MIDI file: {exc}.")
             else:
                 st.session_state["timeline-midi-upload"] = None
+                st.session_state.arrangement_sections = None
                 st.success("MIDI file ingested into the timeline.")
                 st.rerun()
 
@@ -658,6 +770,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
         apply = st.form_submit_button("Apply edits")
     if apply and isinstance(edited, pd.DataFrame):
         st.session_state.timeline.update_from_dataframe(edited)
+        st.session_state.arrangement_sections = None
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -666,11 +779,13 @@ def _timeline_tab(settings: SessionSettings) -> None:
         grid = st.selectbox("Quantize grid", grid_options, format_func=lambda v: grid_labels[v])
         if st.button("Quantize"):
             st.session_state.timeline.quantize(grid)
+            st.session_state.arrangement_sections = None
             st.rerun()
     with col2:
         if st.button("Clear timeline"):
             st.session_state.timeline = Timeline()
             _update_timeline_cursor()
+            st.session_state.arrangement_sections = None
             st.rerun()
     with col3:
         if st.button("Duplicate last bar") and timeline.events:
@@ -687,6 +802,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
             ]
             st.session_state.timeline.extend(new_events)
             _update_timeline_cursor()
+            st.session_state.arrangement_sections = None
             st.rerun()
 
     st.plotly_chart(_timeline_plot(st.session_state.timeline), use_container_width=True)
@@ -777,6 +893,7 @@ def _generator_tab(settings: SessionSettings) -> None:
                 "scale": selected_scale,
                 "instruments": list(selected_instruments),
             }
+            st.session_state.arrangement_sections = None
             _ingest_midi_into_timeline(midi_payload)
             st.session_state.timeline.quantize(0.25)
             audio_segment = midi_to_audio(io.BytesIO(midi_payload))
@@ -786,9 +903,50 @@ def _generator_tab(settings: SessionSettings) -> None:
             st.session_state.generated_audio = audio_buffer.getvalue()
             st.toast("MIDI idea injected into the timeline ✨")
 
+        if st.button("🧱 Generate full arrangement", use_container_width=True):
+            sections: list[SectionArrangement]
+            midi_stream, sections = generate_structured_song(
+                key=selected_key,
+                scale=selected_scale,
+                tempo=selected_tempo,
+                lofi_type=selected_type,
+                rhythm=selected_rhythm,
+                mood=selected_mood,
+                instruments=selected_instruments,
+            )
+            midi_payload = midi_stream.getvalue()
+            st.session_state.timeline = Timeline()
+            _ingest_midi_into_timeline(midi_payload)
+            st.session_state.timeline.quantize(0.25)
+            st.session_state.generated_midi = midi_payload
+            st.session_state.arrangement_sections = [section.to_dict() for section in sections]
+            st.session_state.generator_metadata = {
+                "progression": sections[0].progression if sections else [],
+                "palette": selected_type,
+                "mood": selected_mood,
+                "tempo": selected_tempo,
+                "key": selected_key,
+                "scale": selected_scale,
+                "instruments": list(selected_instruments),
+                "arrangement": st.session_state.arrangement_sections,
+                "hook_motif": next(
+                    (section["hook_motif"] for section in st.session_state.arrangement_sections if section["has_hook"] and section["hook_motif"]),
+                    [],
+                ),
+            }
+            audio_segment = midi_to_audio(io.BytesIO(midi_payload))
+            audio_buffer = io.BytesIO()
+            audio_segment.export(audio_buffer, format="wav")
+            audio_buffer.seek(0)
+            st.session_state.generated_audio = audio_buffer.getvalue()
+            st.toast("Structured arrangement added to the timeline 🎼")
+
         metadata = st.session_state.generator_metadata
         if metadata:
             _render_progression_summary(metadata)
+        arrangement_sections = st.session_state.arrangement_sections
+        if arrangement_sections:
+            _render_arrangement_overview(arrangement_sections)
 
         audio_bytes = st.session_state.generated_audio
         midi_bytes_payload = st.session_state.generated_midi
