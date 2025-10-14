@@ -22,7 +22,7 @@ IS_WINDOWS = os.name == "nt"
 PYTHON_BIN = VENV_DIR / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
 PIP_BIN = VENV_DIR / ("Scripts/pip.exe" if IS_WINDOWS else "bin/pip")
 DEPS_SENTINEL = VENV_DIR / ".deps_installed"
-STREAMLIT_APP = PROJECT_ROOT / "src" / "lofi_symphony" / "app.py"
+LAUNCH_ENTRYPOINT = "lofi_symphony"
 
 
 class LauncherError(RuntimeError):
@@ -101,7 +101,7 @@ def _launch_streamlit(additional_args: list[str]) -> None:
         env["PATH"] = f"{bin_dir}:" + env.get("PATH", "")
     env["VIRTUAL_ENV"] = str(VENV_DIR)
 
-    command = [str(PYTHON_BIN), "-m", "streamlit", "run", str(STREAMLIT_APP)] + additional_args
+    command = [str(PYTHON_BIN), "-m", LAUNCH_ENTRYPOINT] + additional_args
     _debug("Launching Streamlit …")
     subprocess.run(command, env=env, check=True)
 
