@@ -3,21 +3,29 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
+import sys
 from pathlib import Path
 from typing import Sequence
-
-from streamlit.web import bootstrap
 
 
 def _app_path() -> Path:
     return Path(__file__).with_name("app.py")
 
 
-def _launch_streamlit(app_path: Path | None = None) -> None:
+def _launch_streamlit(
+    app_path: Path | None = None,
+    *,
+    streamlit_args: Sequence[str] | None = None,
+) -> None:
     """Start the Streamlit runtime for the packaged app."""
 
     target = app_path or _app_path()
-    bootstrap.run(str(target), "", [], flag_options={})
+    args = [sys.executable, "-m", "streamlit", "run", str(target)]
+    if streamlit_args:
+        args.extend(streamlit_args)
+
+    subprocess.run(args, check=True)
 
 
 def _run_smoke_test(timeout: float = 5.0) -> None:
@@ -42,6 +50,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         action="store_true",
         help="Run a quick headless Streamlit smoke test instead of launching the server.",
     )
+    parser.add_argument(
+        "streamlit_args",
+        nargs=argparse.REMAINDER,
+        help=(
+            "Any additional arguments after '--' are forwarded directly to Streamlit. "
+            "Example: lofi-symphony -- --server.headless true"
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -49,7 +65,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         _run_smoke_test()
         return
 
-    _launch_streamlit()
+    forwarded_args = [arg for arg in args.streamlit_args if arg != "--"] if args.streamlit_args else []
+
+    _launch_streamlit(streamlit_args=forwarded_args)
 
 
 if __name__ == "__main__":  # pragma: no cover
