@@ -13,30 +13,46 @@ LofiSymphony is a polished Streamlit experience for generating instant LoFi insp
 - One-click MIDI export plus FluidSynth-powered audio rendering (when available).
 - Packaged for simple installation – ship it as a tool or embed in your workflow.
 
-## 🚀 Installation
-Clone the repository (or install from a package index in the future) and install the project in editable mode. This pulls in every Python dependency automatically.
+## 🚀 Quick start (no terminal required)
+Download a release zip (or clone the repo) and launch the bundled helper:
 
-```bash
-pip install -e .
-```
+1. **Windows** – double-click `Start Lofi Symphony.bat`.
+2. **macOS** – double-click `Start Lofi Symphony.command` (run `chmod +x` once if macOS marks it as downloaded from the web).
+3. **Linux / power users** – run `python launcher.py` from the project folder.
 
-> **Tip:** Add the optional audio extras to bundle a Python FluidSynth binding alongside the core dependencies:
->
-> ```bash
-> pip install -e .[audio]
-> ```
+The launcher creates an isolated `.lofi_venv` virtual environment, installs the core package *and* the optional audio extras,
+then opens the Streamlit interface in your browser. Subsequent launches reuse the cached environment so you simply double-click
+and jam.
+
+> **Need to pre-download dependencies?** Run `launcher.py --prepare-only` to bootstrap everything without starting the UI, or use
+> `launcher.py --reset` to recreate the environment from scratch.
 
 ### System requirements for audio rendering
-To convert MIDI to audio you still need the `fluidsynth` binary and at least one General MIDI soundfont (e.g. `FluidR3_GM.sf2`). On Debian/Ubuntu:
+The launcher provisions every Python dependency automatically, but FluidSynth-based audio still depends on a native `fluidsynth`
+executable and a General MIDI soundfont. Install those once per machine using the guidance below, then the app will pick them up
+on every launch.
 
-```bash
-sudo apt-get install fluidsynth fluid-soundfont-gm
-```
+- **Windows** – install the prebuilt binaries from the official FluidSynth releases
+  (e.g. [GitHub downloads](https://github.com/FluidSynth/fluidsynth/releases)) or via Chocolatey: `choco install fluidsynth`.
+  Ensure the install folder (usually `C:\Program Files\FluidSynth\bin`) is on your `PATH`.
+- **macOS** – install with Homebrew: `brew install fluidsynth`. If you use MacPorts, run `sudo port install fluidsynth` instead.
+- **Debian/Ubuntu** – install from APT:
 
-Place any custom soundfonts alongside the project or update the environment variable `LOFI_SYMPHONY_SOUNDFONT` to point to it.
+  ```bash
+  sudo apt-get install fluidsynth fluid-soundfont-gm
+  ```
+
+Any General MIDI `.sf2` soundfont will work. Good starting points include the
+[FluidR3 GM soundfont](https://member.keymusician.com/Member/FluidR3_GM/index.html) and
+[MuseScore General](https://musescore.org/en/handbook/3/soundfonts-and-sfz-files#list). Place the `.sf2` file in the project
+folder (next to `launcher.py`) or reference an absolute path by setting the `LOFI_SYMPHONY_SOUNDFONT` environment variable. If
+the variable is unset, LofiSymphony automatically searches for `*.sf2` files alongside the app and uses the first match.
 
 ### Audiocraft (MusicGen) support
-MusicGen generation requires `audiocraft`, `torch` and `torchaudio`. CPU inference works, though a GPU dramatically reduces render time. Install CUDA-enabled PyTorch if you plan to use a GPU. If these packages are missing, the UI will gracefully offer installation hints instead of failing.
+MusicGen generation requires `audiocraft`, `torch` and `torchaudio`. CPU inference works, though a GPU dramatically reduces render
+time. The launcher installs these packages automatically. Install CUDA-enabled PyTorch if you plan to use a GPU. If the optional
+packages fail to install, rerun `launcher.py --reset` after resolving the issue – the UI will gracefully fall back to MIDI-only
+features.
 
 ## 🧪 Running the app
 Launch the web UI with either the console entry point installed by the package or the classic Streamlit command:
@@ -72,6 +88,6 @@ Pull requests are welcome! Share screenshots, new progressions, or improvements 
 
 ## ❓ Troubleshooting
 - **Audio preview unavailable** – confirm `fluidsynth` and a soundfont are installed, then restart the app.
-- **Missing dependencies** – ensure you ran `pip install -e .` (the editable install wires up the bundled requirements).
+- **Missing dependencies** – rerun the launcher so it can reinstall the managed virtual environment (`launcher.py --reset` performs a full rebuild).
 
 Enjoy crafting mellow vibes with **LofiSymphony**. 🎧
