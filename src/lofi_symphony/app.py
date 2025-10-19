@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import importlib.util
 import io
 import json
@@ -9,6 +10,21 @@ import random
 import time
 from dataclasses import dataclass
 from typing import Any, Sequence
+
+
+if __package__ in {None, ""}:  # pragma: no cover - defensive import guard
+    # Allow running ``python src/lofi_symphony/app.py`` without installation by
+    # ensuring the source layout is importable and the module knows its package
+    # name. The resolved path stays within the current process and is never
+    # exposed externally.
+    from pathlib import Path
+
+    package_dir = Path(__file__).resolve().parent
+    src_root = package_dir.parent
+    src_str = str(src_root)
+    if src_str not in sys.path:
+        sys.path.insert(0, src_str)
+    __package__ = "lofi_symphony"
 
 import pandas as pd
 import plotly.graph_objects as go
