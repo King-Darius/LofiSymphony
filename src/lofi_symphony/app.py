@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import random
@@ -60,6 +61,9 @@ KEYBOARD_NOTES = [
     "A#4",
     "B4",
 ]
+
+
+MUSICGEN_AVAILABLE = importlib.util.find_spec("audiocraft") is not None
 
 
 @dataclass(frozen=True)
@@ -971,6 +975,11 @@ def _generator_tab(settings: SessionSettings) -> None:
     with col2:
         st.markdown("### MusicGen preview")
         st.caption("Send evocative prompts to craft shimmering textures and atmospheres.")
+        if not MUSICGEN_AVAILABLE:
+            st.info(
+                "MusicGen extras are not installed. Run `python launcher.py --with-musicgen` "
+                "in the project folder to enable text-to-music rendering."
+            )
         prompt = st.text_area(
             "Prompt",
             value="A dusty lofi beat with warm chords and vinyl crackle",
