@@ -82,6 +82,16 @@ lofi-symphony
 streamlit run lofi_symphony/app.py
 ```
 
+If you prefer working directly from the source tree, run the package as a module
+so Python sets up the package context correctly:
+
+```bash
+python -m lofi_symphony
+
+# or invoke the Streamlit script in place
+python src/lofi_symphony/app.py
+```
+
 The interface opens in your browser. Use the **Generator** tab for structured MIDI ideas, **Performance** for live capture, and **Timeline** to polish or export the arrangement. Hit **Generate progression** to seed the session, improvise with the keyboard or a USB MIDI controller, then audition and download the resulting stems.
 
 ### Importing existing material
