@@ -1,8 +1,79 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Streamlit and app state
+.streamlit/*
+!.streamlit/config.toml
+.streamlit/secrets.toml
+logs/
+
+# User-generated audio and cache artifacts
 *.wav
 *.mp3
 *.mid
+*.ogg
+*.flac
+*.m4a
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+
+# OS metadata
 .DS_Store
-.env
+Thumbs.db
+
+# Python tooling
+pytest_cache/
+.mypy_cache/
+.pytest_cache/
+.pyre/
+.coverage
+htmlcov/
+
+# Docker & containers
+docker-compose.override.yml
+.docker/
+
+# Node-related (for any embedded front-end tooling)
+node_modules/
+.npm/
+
+# Security hardening reminders
+#   - Lock down `[server]` config (address/port/CORS/XSRF, upload caps).
+#   - Disable usage telemetry where policy requires.
+#   - Re-run `pip-audit -r requirements.txt` during release hardening.

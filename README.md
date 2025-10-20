@@ -106,6 +106,10 @@ lofi-symphony --smoke-test
 
 The command loads the Streamlit script in headless mode using `streamlit.testing`. If it exits with a non-zero status, inspect the printed component tree to diagnose the failure. When running the full server via `streamlit run`, remember to stop the process manually (e.g. with `Ctrl+C`) once you've finished testing, otherwise external tooling such as `timeout` will terminate it with exit code `124`.
 
+## 🔒 Deployment hardening checklist
+- Review `.streamlit/config.toml` before hosting the app. The checked-in template locks the server to `127.0.0.1`, keeps CORS/XSRF protections enabled, caps uploads at 50 MB and disables telemetry. Adjust those values deliberately when exposing the UI beyond localhost.
+- Before each release, run `pip-audit -r requirements.txt --progress-spinner off` (or integrate it into CI) to confirm the dependency set remains free of known CVEs.
+
 ## 🛠️ Development
 - `src/lofi_symphony/generator.py` – MIDI creation and audio rendering utilities.
 - `src/lofi_symphony/app.py` – Streamlit UI.
