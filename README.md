@@ -106,6 +106,15 @@ lofi-symphony --smoke-test
 
 The command loads the Streamlit script in headless mode using `streamlit.testing`. If it exits with a non-zero status, inspect the printed component tree to diagnose the failure. When running the full server via `streamlit run`, remember to stop the process manually (e.g. with `Ctrl+C`) once you've finished testing, otherwise external tooling such as `timeout` will terminate it with exit code `124`.
 
+## 🏃 Run locally
+```bash
+# POSIX
+./scripts/run_local.sh
+# PowerShell
+./scripts/run_local.ps1
+```
+No account or email is required. Telemetry is disabled via config/env.
+
 ## 🛠️ Development
 - `src/lofi_symphony/generator.py` – MIDI creation and audio rendering utilities.
 - `src/lofi_symphony/app.py` – Streamlit UI.

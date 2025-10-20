@@ -1,4 +1,4 @@
-streamlit>=1.32
+streamlit>=1.49.1
 pretty_midi>=0.2.10
 music21>=8.3.0
 numpy>=1.23
