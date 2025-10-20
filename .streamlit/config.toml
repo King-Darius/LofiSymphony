@@ -1,0 +1,15 @@
+[server]
+# Bind explicitly to localhost to avoid accidental exposure when tunneling or
+# running on shared hosts. Adjust if you intentionally expose the app.
+address = "127.0.0.1"
+port = 8501
+headless = true
+# Keep Streamlit's CORS and XSRF protections active for browser clients.
+enableCORS = true
+enableXsrfProtection = true
+# Constrain uploads to mitigate oversized payload abuse (value is in megabytes).
+maxUploadSize = 50
+
+[browser]
+# Disable telemetry collection unless an environment explicitly opts in.
+gatherUsageStats = false
