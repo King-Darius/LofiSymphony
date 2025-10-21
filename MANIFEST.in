@@ -1,0 +1,3 @@
+recursive-include src/lofi_symphony/_vendor *
+include scripts/fetch_fluidsynth.py
+include licenses/GPL-2.0.txt

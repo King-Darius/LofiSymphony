@@ -47,8 +47,12 @@ On subsequent launches the launcher reuses the cached environment, so you will j
 
 ### System requirements for audio rendering
 The launcher provisions every Python dependency automatically, but FluidSynth-based audio still depends on a native `fluidsynth`
-executable and a General MIDI soundfont. Install those once per machine using the guidance below, then the app will pick them up
-on every launch.
+executable and a General MIDI soundfont. Official builds now fetch a pre-vetted FluidSynth runtime **and** the
+TimGM6mb General MIDI soundfont (GPL-2) during packaging so the app is ready to render audio immediately. Set
+`LOFI_SYMPHONY_SKIP_SOUNDFONT=1` before building if your redistribution policy cannot accept GPL assets, and use
+`LOFI_SYMPHONY_FLUIDSYNTH` / `LOFI_SYMPHONY_SOUNDFONT` at runtime to override the bundled binary or `.sf2` with a custom path.
+Other platforms can install the executable manually using the guidance below—once present, the app will pick everything up on
+each launch.
 
 - **Windows** – install the prebuilt binaries from the official FluidSynth releases
   (e.g. [GitHub downloads](https://github.com/FluidSynth/fluidsynth/releases)) or via Chocolatey: `choco install fluidsynth`.
@@ -64,7 +68,8 @@ Any General MIDI `.sf2` soundfont will work. Good starting points include the
 [FluidR3 GM soundfont](https://member.keymusician.com/Member/FluidR3_GM/index.html) and
 [MuseScore General](https://musescore.org/en/handbook/3/soundfonts-and-sfz-files#list). Place the `.sf2` file in the project
 folder (next to `launcher.py`) or reference an absolute path by setting the `LOFI_SYMPHONY_SOUNDFONT` environment variable. If
-the variable is unset, LofiSymphony automatically searches for `*.sf2` files alongside the app and uses the first match.
+the variable is unset, LofiSymphony first checks the bundled TimGM6mb copy and then searches for `*.sf2` files alongside the app
+before falling back to system-wide installs.
 
 ### Audiocraft (MusicGen) support
 MusicGen generation requires `audiocraft`, `torch` and `torchaudio`. CPU inference works, though a GPU dramatically reduces render
