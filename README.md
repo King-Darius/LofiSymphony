@@ -92,6 +92,17 @@ python -m lofi_symphony
 python src/lofi_symphony/app.py
 ```
 
+### Run locally
+
+```
+# POSIX
+./scripts/run_local.sh
+# PowerShell
+./scripts/run_local.ps1
+```
+
+No account or email is required. Telemetry is disabled via config/env.
+
 The interface opens in your browser. Use the **Generator** tab for structured MIDI ideas, **Performance** for live capture, and **Timeline** to polish or export the arrangement. Hit **Generate progression** to seed the session, improvise with the keyboard or a USB MIDI controller, then audition and download the resulting stems.
 
 ### Importing existing material
