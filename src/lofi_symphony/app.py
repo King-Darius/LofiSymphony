@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import sys
-import importlib.util
 import io
 import json
+import sys
+import importlib.util
 import random
 import time
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, replace as dataclass_replace
 from typing import Any, Sequence
 
 
@@ -77,6 +78,93 @@ KEYBOARD_NOTES = [
     "A#4",
     "B4",
 ]
+
+
+WORKFLOW_GUIDE_STEPS = [
+    {
+        "title": "Generator",
+        "highlight": "Dial in key, scale, palette and mood to seed harmonic DNA.",
+        "details": "Use the quick actions to drop MIDI ideas on the timeline or to spin up a full arrangement draft.",
+    },
+    {
+        "title": "Performance",
+        "highlight": "Capture takes with the on-screen keyboard or a USB MIDI controller.",
+        "details": "Layer improvisations on top of generated material and keep an eye on the live capture counter.",
+    },
+    {
+        "title": "Arranger",
+        "highlight": "Shape sections, balance tracks and audition hooks before committing to exports.",
+        "details": "The new Arranger tab mirrors the design mockups and will evolve into the full timeline mixer.",
+    },
+    {
+        "title": "Timeline",
+        "highlight": "Quantize, edit clips directly and render polished stems.",
+        "details": "Export MIDI, WAV and JSON when you are happy with the structure.",
+    },
+]
+
+
+DEFAULT_ARRANGER_TRACKS = [
+    {
+        "name": "Chords",
+        "role": "Harmonic bed",
+        "instrument": "Rhodes",
+        "enabled": True,
+        "volume": 82,
+        "pan": 0,
+        "color": "#a855f7",
+    },
+    {
+        "name": "Melody",
+        "role": "Lead phrases",
+        "instrument": "Synth",
+        "enabled": True,
+        "volume": 74,
+        "pan": -8,
+        "color": "#22d3ee",
+    },
+    {
+        "name": "Bass",
+        "role": "Low-end groove",
+        "instrument": "Bass",
+        "enabled": True,
+        "volume": 78,
+        "pan": 6,
+        "color": "#ec4899",
+    },
+    {
+        "name": "Drums",
+        "role": "Rhythm kit",
+        "instrument": "Drums",
+        "enabled": True,
+        "volume": 70,
+        "pan": 0,
+        "color": "#f97316",
+    },
+    {
+        "name": "Textures",
+        "role": "FX layers",
+        "instrument": "FX",
+        "enabled": False,
+        "volume": 52,
+        "pan": 18,
+        "color": "#c084fc",
+    },
+]
+
+
+EFFECT_PRESETS = [
+    "Tape Warmth",
+    "Vinyl Crackle",
+    "Lush Chorus",
+    "Stereo Spread",
+    "Dusty Reverb",
+    "Lo-Fi Delay",
+]
+
+
+ARRANGER_AUTOMATION_DEFAULT = 100
+BEATS_PER_BAR = 2.0
 
 
 MUSICGEN_AVAILABLE = importlib.util.find_spec("audiocraft") is not None
@@ -287,11 +375,458 @@ def _render_css() -> None:
         color: #cffafe;
         font-size: 0.8rem;
     }
+    .workflow-panel {
+        margin-top: 0.85rem;
+        border-radius: 16px;
+        background: linear-gradient(145deg, rgba(30, 41, 59, 0.6), rgba(15, 23, 42, 0.65));
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        padding: 1rem 1.25rem;
+    }
+    .workflow-step {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.65rem 0.75rem;
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        margin-bottom: 0.55rem;
+    }
+    .workflow-step h4 {
+        margin: 0;
+        font-size: 1rem;
+        color: #c4b5fd;
+        letter-spacing: 0.02em;
+    }
+    .workflow-step span {
+        font-size: 0.95rem;
+        color: #bfdbfe;
+    }
+    .workflow-step p {
+        margin: 0;
+        color: #e2e8f0;
+        opacity: 0.85;
+        font-size: 0.9rem;
+    }
+    .arranger-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 1rem;
+        margin-top: 1.1rem;
+    }
+    .arranger-summary-card {
+        border-radius: 18px;
+        padding: 1rem 1.1rem;
+        background: linear-gradient(160deg, rgba(30, 64, 175, 0.55), rgba(14, 165, 233, 0.3));
+        border: 1px solid rgba(125, 211, 252, 0.3);
+        box-shadow: 0 18px 34px rgba(14, 165, 233, 0.16);
+        transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+    .arranger-summary-card.muted {
+        opacity: 0.55;
+        background: linear-gradient(160deg, rgba(79, 70, 229, 0.25), rgba(14, 165, 233, 0.15));
+        border-color: rgba(148, 163, 184, 0.25);
+    }
+    .arranger-summary-card h4 {
+        margin: 0;
+        font-size: 1.05rem;
+        color: #ede9fe;
+    }
+    .arranger-role {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #f5f3ff;
+        opacity: 0.8;
+    }
+    .arranger-meter {
+        margin-top: 0.75rem;
+        height: 8px;
+        width: 100%;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.65);
+        overflow: hidden;
+    }
+    .arranger-meter-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(224, 231, 255, 0.9), rgba(96, 165, 250, 0.95));
+    }
+    .arranger-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.3rem 0.65rem;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        font-size: 0.8rem;
+        color: #bfdbfe;
+    }
+    .arranger-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.65rem;
+    }
+    .arranger-table th,
+    .arranger-table td {
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        padding: 0.55rem 0.65rem;
+        text-align: left;
+        font-size: 0.9rem;
+        color: #e2e8f0;
+        background: rgba(15, 23, 42, 0.55);
+    }
+    .arranger-table th {
+        background: rgba(30, 41, 59, 0.75);
+        text-transform: uppercase;
+        font-size: 0.8rem;
+        letter-spacing: 0.05em;
+        color: #c4b5fd;
+    }
     </style>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
 
 
+def _workflow_guide() -> None:
+    st.markdown(
+        """
+        <div class="workflow-panel">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 0.65rem;">
+                    <div style="width: 40px; height: 40px; border-radius: 14px; background: linear-gradient(135deg, rgba(167, 139, 250, 0.45), rgba(56, 189, 248, 0.45)); display: grid; place-items: center; font-size: 1.25rem;">🎛️</div>
+                    <div>
+                        <div style="font-weight: 600; color: #e0e7ff; letter-spacing: 0.05em;">Workflow guide</div>
+                        <div style="font-size: 0.85rem; color: #cbd5f5;">Mirror the GUI mockups inside Streamlit while the interactive features land.</div>
+                    </div>
+                </div>
+                <span class="arranger-chip">Design parity roadmap</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    for step in WORKFLOW_GUIDE_STEPS:
+        st.markdown(
+            f"""
+            <div class="workflow-step">
+                <h4>{step["title"]}</h4>
+                <span>{step["highlight"]}</span>
+                <p>{step["details"]}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _arranger_section_names(sections: Sequence[dict[str, Any]] | None) -> list[str]:
+    if not sections:
+        return ["Global"]
+    ordered = sorted(sections, key=lambda item: item.get("start_bar", 0))
+    return [item.get("name", f"Section {index + 1}") for index, item in enumerate(ordered)]
+
+
+def _initialise_arranger_state(
+    sections: Sequence[dict[str, Any]] | None = None,
+    *,
+    reset_lanes: bool = False,
+) -> None:
+    """Ensure arranger track state, automation and lane metadata exist."""
+
+    if "arranger_tracks" not in st.session_state:
+        st.session_state.arranger_tracks = []
+        for template in DEFAULT_ARRANGER_TRACKS:
+            st.session_state.arranger_tracks.append(
+                {
+                    **template,
+                    "solo": False,
+                    "effects": [],
+                    "automation": {},
+                }
+            )
+
+    if sections is None:
+        sections = st.session_state.get("arrangement_sections") or []
+
+    timeline: Timeline = st.session_state.get("timeline", Timeline())
+    existing_instruments = {track["instrument"] for track in st.session_state.arranger_tracks}
+    discovered_instruments = sorted({event.instrument for event in getattr(timeline, "events", [])})
+    for instrument in discovered_instruments:
+        if instrument not in existing_instruments:
+            st.session_state.arranger_tracks.append(
+                {
+                    "name": instrument,
+                    "role": "Imported",
+                    "instrument": instrument,
+                    "enabled": True,
+                    "volume": 80,
+                    "pan": 0,
+                    "color": "#38bdf8",
+                    "solo": False,
+                    "effects": [],
+                    "automation": {},
+                }
+            )
+            existing_instruments.add(instrument)
+
+    _sync_arranger_from_sections(sections)
+
+    if reset_lanes or "arranger_lanes" not in st.session_state:
+        st.session_state.arranger_lanes = _build_arranger_lane_records(sections)
+
+
+def _sync_arranger_from_sections(sections: Sequence[dict[str, Any]] | None) -> None:
+    tracks = st.session_state.get("arranger_tracks")
+    if not tracks:
+        return
+
+    section_names = _arranger_section_names(sections)
+    for track in tracks:
+        automation = track.setdefault("automation", {})
+        for name in section_names:
+            automation.setdefault(name, ARRANGER_AUTOMATION_DEFAULT)
+        obsolete = [name for name in automation if name not in section_names]
+        for name in obsolete:
+            automation.pop(name, None)
+    st.session_state.arranger_tracks = tracks
+
+
+def _build_arranger_lane_records(sections: Sequence[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    tracks = st.session_state.get("arranger_tracks", [])
+    lanes: list[dict[str, Any]] = []
+    order_counter = 0
+
+    if sections:
+        ordered_sections = sorted(sections, key=lambda item: item.get("start_bar", 0))
+        for section in ordered_sections:
+            start = section.get("start_bar", 0) * BEATS_PER_BAR
+            length = section.get("n_bars", 4) * BEATS_PER_BAR
+            instruments = section.get("instruments") or [track["instrument"] for track in tracks]
+            for instrument in instruments:
+                lanes.append(
+                    {
+                        "Order": order_counter,
+                        "Section": section.get("name", f"Section {order_counter + 1}"),
+                        "Instrument": instrument,
+                        "Start (beats)": round(start, 2),
+                        "Length (beats)": round(length, 2),
+                    }
+                )
+                order_counter += 1
+    else:
+        for track in tracks:
+            lanes.append(
+                {
+                    "Order": order_counter,
+                    "Section": "Global",
+                    "Instrument": track["instrument"],
+                    "Start (beats)": 0.0,
+                    "Length (beats)": 8.0,
+                }
+            )
+            order_counter += 1
+
+    return lanes
+
+
+def _section_for_start(start: float, sections: Sequence[dict[str, Any]] | None) -> str | None:
+    if not sections:
+        return None
+    ordered = sorted(sections, key=lambda item: item.get("start_bar", 0))
+    for section in ordered:
+        section_start = section.get("start_bar", 0) * BEATS_PER_BAR
+        section_length = section.get("n_bars", 4) * BEATS_PER_BAR
+        section_end = section_start + section_length
+        if section_start <= start < section_end:
+            return section.get("name")
+    return None
+
+
+def _arranger_tracks_map() -> dict[str, dict[str, Any]]:
+    tracks = st.session_state.get("arranger_tracks", [])
+    return {track["instrument"]: track for track in tracks}
+
+
+def _active_arranger_tracks() -> dict[str, dict[str, Any]]:
+    tracks = st.session_state.get("arranger_tracks", [])
+    if not tracks:
+        return {}
+
+    solo_active = any(track.get("solo") for track in tracks)
+    active: dict[str, dict[str, Any]] = {}
+    for track in tracks:
+        instrument = track["instrument"]
+        if solo_active:
+            if track.get("solo"):
+                active[instrument] = track
+        else:
+            if track.get("enabled", True):
+                active[instrument] = track
+    if not active:
+        return {}
+    return active
+
+
+def _update_sections_from_lanes(lanes: list[dict[str, Any]]) -> None:
+    if not lanes:
+        return
+
+    previous_sections = st.session_state.get("arrangement_sections") or []
+    if not previous_sections:
+        return
+
+    previous_map = {section["name"]: dict(section) for section in previous_sections if section.get("name")}
+
+    section_accumulator: dict[str, dict[str, float]] = defaultdict(lambda: {"start": None, "end": None})
+    for lane in lanes:
+        section_name = lane.get("Section")
+        start = float(lane.get("Start (beats)", 0.0))
+        length = float(lane.get("Length (beats)", BEATS_PER_BAR * 4))
+        end = start + length
+        stats = section_accumulator[section_name]
+        stats["start"] = start if stats["start"] is None else min(stats["start"], start)
+        stats["end"] = end if stats["end"] is None else max(stats["end"], end)
+
+    delta_map: dict[str, float] = {}
+    updated_sections: list[dict[str, Any]] = []
+    for section_name, stats in section_accumulator.items():
+        start_beats = stats["start"] or 0.0
+        end_beats = stats["end"] or (start_beats + BEATS_PER_BAR * 4)
+        length_beats = max(BEATS_PER_BAR, end_beats - start_beats)
+        start_bar = int(round(start_beats / BEATS_PER_BAR))
+        n_bars = max(1, int(round(length_beats / BEATS_PER_BAR)))
+
+        previous = previous_map.get(section_name)
+        if previous:
+            old_start_beats = previous.get("start_bar", 0) * BEATS_PER_BAR
+            delta_map[section_name] = start_beats - old_start_beats
+        else:
+            delta_map[section_name] = 0.0
+
+        updated_sections.append(
+            {
+                "name": section_name,
+                "start_bar": start_bar,
+                "n_bars": n_bars,
+                "progression": (previous or {}).get("progression", []),
+                "instruments": (previous or {}).get("instruments", []),
+                "has_hook": (previous or {}).get("has_hook", False),
+                "hook_motif": (previous or {}).get("hook_motif", []),
+            }
+        )
+
+    updated_sections.sort(key=lambda item: item.get("start_bar", 0))
+    _shift_timeline_sections(previous_sections, delta_map)
+    st.session_state.arrangement_sections = updated_sections
+    _sync_arranger_from_sections(updated_sections)
+
+
+def _shift_timeline_sections(previous_sections: Sequence[dict[str, Any]], delta_map: dict[str, float]) -> None:
+    if not previous_sections or not delta_map:
+        return
+
+    timeline: Timeline = st.session_state.timeline
+    if not timeline.events:
+        return
+
+    section_ranges = []
+    for section in previous_sections:
+        name = section.get("name")
+        start = section.get("start_bar", 0) * BEATS_PER_BAR
+        end = start + section.get("n_bars", 4) * BEATS_PER_BAR
+        section_ranges.append((name, start, end))
+
+    adjusted_events: list[TimelineEvent] = []
+    for event in timeline.events:
+        section_name = None
+        for name, start, end in section_ranges:
+            if start <= event.start < end:
+                section_name = name
+                break
+        delta = delta_map.get(section_name, 0.0)
+        adjusted_events.append(
+            dataclass_replace(
+                event,
+                start=max(0.0, event.start + delta),
+            )
+        )
+
+    st.session_state.timeline = Timeline(adjusted_events)
+
+
+def _arranger_filtered_timeline(timeline: Timeline) -> Timeline:
+    active_tracks = _active_arranger_tracks()
+    if not active_tracks:
+        return Timeline([])
+
+    sections = st.session_state.get("arrangement_sections") or []
+    filtered_events: list[TimelineEvent] = []
+
+    for event in timeline.events:
+        track = active_tracks.get(event.instrument)
+        if not track:
+            continue
+
+        volume_factor = track.get("volume", 100) / 100.0
+        if volume_factor <= 0:
+            continue
+
+        section_name = _section_for_start(event.start, sections)
+        automation_map = track.get("automation", {})
+        automation_value = automation_map.get(section_name or "Global", ARRANGER_AUTOMATION_DEFAULT)
+        automation_factor = automation_value / 100.0
+
+        velocity = int(round(event.velocity * volume_factor * automation_factor))
+        velocity = int(_clamp(velocity, 1, 127))
+
+        filtered_events.append(
+            dataclass_replace(
+                event,
+                velocity=velocity,
+            )
+        )
+
+    return Timeline(filtered_events)
+
+
+def _apply_arranger_midi_mix(midi_obj: pretty_midi.PrettyMIDI) -> None:
+    if not midi_obj.instruments:
+        return
+
+    track_map = _arranger_tracks_map()
+    if not track_map:
+        return
+
+    for instrument in midi_obj.instruments:
+        name = instrument.name or ""
+        base_name = name.split(" (", 1)[0] if name else ""
+        track = track_map.get(name) or track_map.get(base_name)
+        if not track:
+            continue
+
+        volume_cc = int(round(track.get("volume", 100) / 100.0 * 127))
+        pan_value = track.get("pan", 0)
+        pan_cc = int(round(((pan_value + 50) / 100.0) * 127))
+
+        instrument.control_changes = [
+            cc for cc in instrument.control_changes if cc.control not in (7, 10)
+        ]
+        instrument.control_changes.insert(0, pretty_midi.ControlChange(control=7, value=volume_cc, time=0.0))
+        instrument.control_changes.insert(0, pretty_midi.ControlChange(control=10, value=pan_cc, time=0.0))
+
+        effects = track.get("effects") or []
+        if effects:
+            instrument.name = f"{track['instrument']} ({', '.join(effects)})"
+        else:
+            instrument.name = track["instrument"]
 def _render_header() -> None:
     st.markdown(
         """
@@ -307,6 +842,7 @@ def _render_header() -> None:
         """,
         unsafe_allow_html=True,
     )
+    _workflow_guide()
 
 
 def _render_session_overview(settings: SessionSettings) -> None:
@@ -476,6 +1012,7 @@ def _initialise_state() -> None:
         st.session_state.musicgen_path = None
     if "arrangement_sections" not in st.session_state:
         st.session_state.arrangement_sections = None
+    _initialise_arranger_state(st.session_state.arrangement_sections)
 
 
 def _settings_panel() -> SessionSettings:
@@ -744,6 +1281,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
                 st.session_state.generated_audio = None
                 st.session_state.generator_metadata = None
                 st.session_state.arrangement_sections = None
+                _initialise_arranger_state(None, reset_lanes=True)
                 st.session_state["timeline-json-upload"] = None
                 st.success("Timeline restored from JSON.")
                 st.rerun()
@@ -763,6 +1301,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
             else:
                 st.session_state["timeline-midi-upload"] = None
                 st.session_state.arrangement_sections = None
+                _initialise_arranger_state(None, reset_lanes=True)
                 st.success("MIDI file ingested into the timeline.")
                 st.rerun()
 
@@ -806,6 +1345,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
             st.session_state.timeline = Timeline()
             _update_timeline_cursor()
             st.session_state.arrangement_sections = None
+            st.session_state.arranger_lanes = []
             st.rerun()
     with col3:
         if st.button("Duplicate last bar") and timeline.events:
@@ -832,23 +1372,28 @@ def _timeline_tab(settings: SessionSettings) -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    midi_obj = st.session_state.timeline.to_pretty_midi(tempo)
-    midi_bytes = io.BytesIO()
-    midi_obj.write(midi_bytes)
-    midi_bytes.seek(0)
-    st.download_button("Download timeline MIDI", midi_bytes, file_name="timeline.mid", mime="audio/midi")
+    playback_timeline = _arranger_filtered_timeline(st.session_state.timeline)
+    if not playback_timeline.events:
+        st.warning("All tracks are muted or soloed away; nothing to render. Enable a track to export audio.")
+    else:
+        midi_obj = playback_timeline.to_pretty_midi(tempo)
+        _apply_arranger_midi_mix(midi_obj)
+        midi_bytes = io.BytesIO()
+        midi_obj.write(midi_bytes)
+        midi_bytes.seek(0)
+        st.download_button("Download timeline MIDI", midi_bytes, file_name="timeline.mid", mime="audio/midi")
 
-    audio_segment = midi_to_audio(io.BytesIO(midi_bytes.getvalue()))
-    audio_buffer = io.BytesIO()
-    audio_segment.export(audio_buffer, format="wav")
-    audio_buffer.seek(0)
-    st.audio(audio_buffer)
-    st.download_button(
-        "Download timeline WAV",
-        data=audio_buffer.getvalue(),
-        file_name="timeline.wav",
-        mime="audio/wav",
-    )
+        audio_segment = midi_to_audio(io.BytesIO(midi_bytes.getvalue()))
+        audio_buffer = io.BytesIO()
+        audio_segment.export(audio_buffer, format="wav")
+        audio_buffer.seek(0)
+        st.audio(audio_buffer)
+        st.download_button(
+            "Download timeline WAV",
+            data=audio_buffer.getvalue(),
+            file_name="timeline.wav",
+            mime="audio/wav",
+        )
 
     json_payload = json.dumps([event.to_dict() for event in st.session_state.timeline.events], indent=2).encode("utf-8")
     st.download_button(
@@ -869,6 +1414,203 @@ def _performance_tab(settings: SessionSettings) -> None:
     _keyboard_block(tempo)
     st.divider()
     _midi_block(tempo)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _arranger_tab(settings: SessionSettings) -> None:
+    sections = st.session_state.get("arrangement_sections") or []
+    _initialise_arranger_state(sections)
+    tracks = st.session_state.arranger_tracks
+    timeline: Timeline = st.session_state.timeline
+    metadata = st.session_state.get("generator_metadata") or {}
+
+    st.markdown("<div class='lofi-card'>", unsafe_allow_html=True)
+    st.subheader("Arranger desk", divider="rainbow")
+    st.caption(
+        "Balance stems, automate sections and reshuffle clip lanes. These controls feed directly into playback and exports."
+    )
+
+    if metadata:
+        chords = metadata.get("progression", [])
+        palette = metadata.get("palette", settings.palette)
+        tempo = metadata.get("tempo", settings.tempo)
+        tonality = f"{metadata.get('key', settings.key)} {str(metadata.get('scale', settings.scale)).title()}"
+        chord_html = "".join(f"<span class='progression-chip'>{chord}</span>" for chord in chords)
+        st.markdown(
+            f"""
+            <div class="progression-card" style="margin-bottom: 1rem;">
+                <div class="progression-header">
+                    <span class="progression-title">Session palette</span>
+                    <span class="progression-meta">{tonality} �?� {tempo} BPM �?� {palette}</span>
+                </div>
+                <div class="progression-chips">{chord_html}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    section_names = _arranger_section_names(sections)
+
+    st.markdown("### Mixer controls")
+    solo_active = any(track.get("solo") for track in tracks)
+    for idx, track in enumerate(tracks):
+        track_key = f"{track['name'].lower().replace(' ', '-')}-{idx}"
+        container = st.container()
+        with container:
+            st.markdown(f"#### {track['name']} <small style='color:#94a3b8;'>({track['instrument']})</small>", unsafe_allow_html=True)
+            col1, col2, col3 = st.columns([1.1, 1.2, 1.7])
+
+            mute_key = f"arranger-mute-{track_key}"
+            solo_key = f"arranger-solo-{track_key}"
+            volume_key = f"arranger-volume-{track_key}"
+            pan_key = f"arranger-pan-{track_key}"
+            fx_key = f"arranger-fx-{track_key}"
+
+            mute_default = not track.get("enabled", True)
+            solo_default = track.get("solo", False)
+            volume_default = track.get("volume", 100)
+            pan_default = track.get("pan", 0)
+            effects_default = track.get("effects", [])
+
+            mute = col1.toggle("Mute", value=mute_default, key=mute_key)
+            solo = col1.toggle("Solo", value=solo_default, key=solo_key)
+
+            volume = col2.slider("Volume", min_value=0, max_value=120, value=volume_default, key=volume_key)
+            pan = col2.slider("Pan", min_value=-50, max_value=50, value=pan_default, format="%d", key=pan_key)
+
+            effects = col3.multiselect(
+                "Effects rack",
+                EFFECT_PRESETS,
+                default=effects_default,
+                key=fx_key,
+                help="Add flavour to this track. The playlist metadata carries these labels into exports.",
+            )
+
+            automation_key_prefix = f"arranger-automation-{track_key}"
+            automation_map = track.get("automation", {})
+            with col3.expander("Automation by section"):
+                for section_name in section_names:
+                    slider_key = f"{automation_key_prefix}-{section_name}"
+                    default_value = automation_map.get(section_name, ARRANGER_AUTOMATION_DEFAULT)
+                    automation_value = st.slider(
+                        section_name,
+                        min_value=0,
+                        max_value=127,
+                        value=default_value,
+                        key=slider_key,
+                        help="Adjust relative intensity per section (applied to MIDI velocity).",
+                    )
+                    automation_map[section_name] = automation_value
+
+            track["enabled"] = not mute
+            track["solo"] = solo
+            track["volume"] = volume
+            track["pan"] = pan
+            track["effects"] = effects
+            track["automation"] = automation_map
+
+            if effects:
+                fx_html = "".join(f"<span class='arranger-chip'>{effect}</span>" for effect in effects)
+                st.markdown(f"<div style='margin-top:0.4rem;'>Active FX: {fx_html}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='margin-top:0.4rem; color:#64748b;'>Active FX: None</div>", unsafe_allow_html=True)
+
+    st.session_state.arranger_tracks = tracks
+
+    if solo_active:
+        st.info("Solo mode enabled — muted tracks are still available but excluded from playback until solo is cleared.")
+
+    st.markdown("### Clip lanes")
+    _sync_arranger_from_sections(sections)
+    lanes = list(st.session_state.get("arranger_lanes", []))
+    track_map = _arranger_tracks_map()
+
+    if lanes:
+        prepared_records: list[dict[str, Any]] = []
+        for record in lanes:
+            base = dict(record)
+            effects = track_map.get(base.get("Instrument", ""), {}).get("effects", [])
+            base["Effects"] = ", ".join(effects) if effects else "—"
+            prepared_records.append(base)
+        lane_df = pd.DataFrame(prepared_records).sort_values("Order").reset_index(drop=True)
+        st.caption("Drag row handles to reorder lanes. Edit start/length to reshape sections across instruments.")
+        column_config = {
+            "Order": st.column_config.NumberColumn("Order", disabled=True),
+            "Section": st.column_config.SelectboxColumn("Section", options=section_names),
+            "Instrument": st.column_config.SelectboxColumn("Instrument", options=list(track_map.keys())),
+            "Start (beats)": st.column_config.NumberColumn("Start (beats)", min_value=0.0, step=0.25),
+            "Length (beats)": st.column_config.NumberColumn("Length (beats)", min_value=0.5, step=0.5),
+            "Effects": st.column_config.TextColumn("Effects", disabled=True),
+        }
+        edited_df = st.data_editor(
+            lane_df,
+            num_rows="dynamic",
+            hide_index=True,
+            use_container_width=True,
+            column_config=column_config,
+            key="arranger-lanes-editor",
+        )
+
+        if isinstance(edited_df, pd.DataFrame):
+            updated_records = edited_df.to_dict("records")
+            # Normalise order and strip derived columns
+            normalised_records: list[dict[str, Any]] = []
+            for order, record in enumerate(updated_records):
+                normalised_records.append(
+                    {
+                        "Order": order,
+                        "Section": record.get("Section", "Global"),
+                        "Instrument": record.get("Instrument"),
+                        "Start (beats)": float(record.get("Start (beats)", 0.0)),
+                        "Length (beats)": float(record.get("Length (beats)", BEATS_PER_BAR * 4)),
+                    }
+                )
+            if normalised_records != st.session_state.arranger_lanes:
+                st.session_state.arranger_lanes = normalised_records
+                _update_sections_from_lanes(normalised_records)
+                st.toast("Arranger lanes updated")
+    else:
+        st.info("No lane metadata yet. Create a structured arrangement or add clips to the timeline to seed lanes.")
+
+    current_sections = st.session_state.get("arrangement_sections") or []
+    if current_sections:
+        rows = []
+        for section in current_sections:
+            start = section.get("start_bar", 0)
+            n_bars = section.get("n_bars", 0)
+            instruments = ", ".join(section.get("instruments", [])) or "None"
+            hook_flag = "Yes" if section.get("has_hook") else "No"
+            rows.append(
+                f"<tr><td>{section.get('name')}</td><td>{start}</td><td>{n_bars}</td><td>{instruments}</td><td>{hook_flag}</td></tr>"
+            )
+        st.markdown(
+            f"""
+            <div style="margin-top: 1.5rem;">
+                <h4 style="color: #cbd5f5; margin-bottom: 0.35rem;">Arrangement roadmap</h4>
+                <table class="arranger-table">
+                    <thead>
+                        <tr>
+                            <th>Section</th>
+                            <th>Start bar</th>
+                            <th>Length</th>
+                            <th>Instruments</th>
+                            <th>Hook</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join(rows)}
+                    </tbody>
+                </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    if timeline.events:
+        st.success(f"{len(timeline.events)} timeline clips active. Timeline playback honours the mixer settings above.")
+    else:
+        st.info("Generate a progression or record a take to populate the arranger.")
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -921,6 +1663,7 @@ def _generator_tab(settings: SessionSettings) -> None:
             audio_segment.export(audio_buffer, format="wav")
             audio_buffer.seek(0)
             st.session_state.generated_audio = audio_buffer.getvalue()
+            _initialise_arranger_state(st.session_state.arrangement_sections, reset_lanes=True)
             st.toast("MIDI idea injected into the timeline ✨")
 
         if st.button("🧱 Generate full arrangement", use_container_width=True):
@@ -959,6 +1702,7 @@ def _generator_tab(settings: SessionSettings) -> None:
             audio_segment.export(audio_buffer, format="wav")
             audio_buffer.seek(0)
             st.session_state.generated_audio = audio_buffer.getvalue()
+            _initialise_arranger_state(st.session_state.arrangement_sections, reset_lanes=True)
             st.toast("Structured arrangement added to the timeline 🎼")
 
         metadata = st.session_state.generator_metadata
@@ -1078,11 +1822,15 @@ def main() -> None:
     settings = _settings_panel()
     _render_session_overview(settings)
 
-    generator_tab, performance_tab, timeline_tab = st.tabs(["Generator", "Performance", "Timeline"])
+    generator_tab, performance_tab, arranger_tab, timeline_tab = st.tabs(
+        ["Generator", "Performance", "Arranger", "Timeline"]
+    )
     with generator_tab:
         _generator_tab(settings)
     with performance_tab:
         _performance_tab(settings)
+    with arranger_tab:
+        _arranger_tab(settings)
     with timeline_tab:
         _timeline_tab(settings)
 

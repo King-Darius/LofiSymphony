@@ -11,7 +11,15 @@ LofiSymphony is a polished Streamlit experience for generating instant LoFi insp
 - Genre-aware chord palettes, melodies and bass lines powered by `pretty_midi` and `music21`.
 - Humanised rhythms, drum grooves and optional vinyl texture overlay.
 - One-click MIDI export plus FluidSynth-powered audio rendering (when available).
-- Packaged for simple installation – ship it as a tool or embed in your workflow.
+- Packaged for simple installation -- ship it as a tool or embed in your workflow.
+
+## UI parity roadmap
+- [x] Mirror the reference styling across Generator, Performance and Timeline.
+- [x] Surface an Arranger preview tab with static mixer cards and section summaries.
+- [x] Enable interactive track mute/solo, pan and per-section automation tied to playback.
+- [x] Implement drag-and-drop clip lanes with coloured sections and section-aware timing.
+- [x] Embed effects rack controls and export presets matching the mockups.
+
 
 ## 🚀 Quick start (no terminal required)
 Download a release zip (or clone the repo) and launch the bundled helper:

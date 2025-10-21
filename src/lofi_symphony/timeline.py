@@ -105,9 +105,11 @@ class Timeline:
                         program = 0
             instrument = grouped.get(event.instrument)
             if instrument is None:
-                instrument = pretty_midi.Instrument(program=program, is_drum=is_drum)
+                instrument = pretty_midi.Instrument(program=program, is_drum=is_drum, name=event.instrument)
                 grouped[event.instrument] = instrument
                 midi.instruments.append(instrument)
+            elif not instrument.name:
+                instrument.name = event.instrument
 
             note = pretty_midi.Note(
                 start=event.start,
