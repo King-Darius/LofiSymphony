@@ -79,7 +79,7 @@ Launch the web UI with either the console entry point installed by the package o
 lofi-symphony
 
 # or manually
-streamlit run lofi_symphony/app.py
+python -m streamlit run lofi_symphony/app.py
 ```
 
 If you prefer working directly from the source tree, run the package as a module
