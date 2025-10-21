@@ -94,9 +94,44 @@ def _download_file(url: str, dest: Path, *, expected_sha256: str) -> None:
 
 
 def _extract_windows_zip(archive: Path, dest: Path) -> None:
+    """Extract the ``bin/`` directory from a FluidSynth Windows archive."""
+
     with zipfile.ZipFile(archive) as bundle:
-        members = [name for name in bundle.namelist() if name.startswith("bin/")]
-        bundle.extractall(dest, members)
+        extracted_any = False
+
+        for info in bundle.infolist():
+            normalized = info.filename.replace("\\", "/")
+            parts = [part for part in normalized.split("/") if part]
+            if not parts:
+                continue
+
+            try:
+                bin_index = parts.index("bin")
+            except ValueError:
+                continue
+
+            relative_parts = parts[bin_index:]
+            if not relative_parts:
+                continue
+
+            target_path = dest.joinpath(*relative_parts)
+            if info.is_dir():
+                target_path.mkdir(parents=True, exist_ok=True)
+            else:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with bundle.open(info) as source, target_path.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+
+                permissions = info.external_attr >> 16
+                if permissions:
+                    target_path.chmod(permissions)
+
+            extracted_any = True
+
+        if not extracted_any:
+            # ``ensure_fluidsynth_bundle`` will surface a clearer error message, but
+            # raising here keeps the temporary extraction directory clean in tests.
+            raise RuntimeError("FluidSynth archive did not contain a bin/ directory")
 
 
 def _write_version_marker(dest: Path, *, version: str) -> None:
