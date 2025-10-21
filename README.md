@@ -30,6 +30,8 @@ enable MusicGen support, so the install won't get stuck on missing components.
 > Those optional packages pull in PyTorch and spaCy, so the download is larger and Windows users still need the Microsoft C++
 > Build Tools before enabling the flag.
 
+Prefer setting everything up manually? Skip ahead to [run locally from a terminal](#-run-locally-from-a-terminal) for a slim, developer-friendly workflow.
+
 ### What to expect on first launch
 
 1. The launcher checks that a compatible Python (3.9–3.11) is available. If not, install one from [python.org](https://www.python.org/downloads/) first.
@@ -105,6 +107,18 @@ lofi-symphony --smoke-test
 ```
 
 The command loads the Streamlit script in headless mode using `streamlit.testing`. If it exits with a non-zero status, inspect the printed component tree to diagnose the failure. When running the full server via `streamlit run`, remember to stop the process manually (e.g. with `Ctrl+C`) once you've finished testing, otherwise external tooling such as `timeout` will terminate it with exit code `124`.
+
+## 🧑‍💻 Run locally from a terminal
+Prefer to stay in your own shell instead of the bundled launcher? Create a virtual environment, install the core requirements, then call the helper that mirrors the quick-start hardening:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+./scripts/run_local.sh      # Windows PowerShell: ./scripts/run_local.ps1
+```
+
+The shell and PowerShell helpers keep the Streamlit server bound to localhost, disable telemetry, and honour the prompt safeguards defined in `.streamlit/config.toml`. Pass arguments after `--` to forward them straight to Streamlit (for example `./scripts/run_local.sh -- --server.port 8502`). If you prefer not to use the helpers, run `python -m streamlit run src/lofi_symphony/app.py` from an environment where `src/` is on `PYTHONPATH`.
 
 ## 🔒 Deployment hardening checklist
 - Review `.streamlit/config.toml` before hosting the app. The checked-in template locks the server to `127.0.0.1`, keeps CORS/XSRF protections enabled, caps uploads at 50 MB and disables telemetry. Adjust those values deliberately when exposing the UI beyond localhost.
