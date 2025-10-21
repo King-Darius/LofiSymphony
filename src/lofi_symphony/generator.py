@@ -7,6 +7,7 @@ import os
 import random
 import subprocess
 import tempfile
+import warnings
 from dataclasses import dataclass
 from typing import Iterable, List, Sequence
 
@@ -14,7 +15,14 @@ import numpy as np
 import pretty_midi
 from music21 import chord, key as m21key, pitch as m21pitch
 from pydub import AudioSegment
+from pydub.exceptions import CouldntDecodeError
 from pydub.generators import WhiteNoise
+
+from .fluidsynth_assets import (
+    SOUNDFONT_ENV_VAR,
+    resolve_fluidsynth_executable,
+    resolve_soundfont_path,
+)
 
 __all__ = [
     "generate_lofi_midi",
@@ -251,6 +259,20 @@ def _add_fx_layer(audio: AudioSegment) -> AudioSegment:
     return audio.overlay(vinyl)
 
 
+def _placeholder_audio_from_midi(midi_payload: bytes) -> AudioSegment:
+    """Generate a silent audio placeholder that matches the MIDI length."""
+
+    try:
+        midi_stream = io.BytesIO(midi_payload)
+        midi_stream.seek(0)
+        midi_data = pretty_midi.PrettyMIDI(midi_stream)
+        duration_ms = int(max(midi_data.get_end_time(), 0.5) * 1000)
+    except Exception:
+        duration_ms = 2000
+    duration_ms = max(duration_ms, 500)
+    return AudioSegment.silent(duration=duration_ms)
+
+
 def generate_lofi_midi(
     *,
     key: str = "C",
@@ -400,32 +422,44 @@ def generate_structured_song(
 
 
 def midi_to_audio(midi_bytes: io.BytesIO, *, soundfont: str | None = None, add_vinyl_fx: bool = True) -> AudioSegment:
-    """Render a MIDI byte stream to audio using FluidSynth."""
+    """Render a MIDI byte stream to audio using FluidSynth when available."""
+
+    midi_bytes.seek(0)
+    midi_payload = midi_bytes.getvalue()
 
     if soundfont and not os.path.exists(soundfont):
         raise FileNotFoundError(f"Soundfont not found at {soundfont}")
 
-    env_soundfont = os.getenv("LOFI_SYMPHONY_SOUNDFONT")
-    default_soundfonts: List[str] = [
-        soundfont,
-        env_soundfont,
-        "/usr/share/sounds/sf2/FluidR3_GM.sf2",
-        "/usr/share/soundfonts/default.sf2",
-        os.path.join(os.getcwd(), "default.sf2"),
-    ]
-    soundfont_path = next((path for path in default_soundfonts if path and os.path.exists(path)), None)
+    def _fallback(reason: str) -> AudioSegment:
+        warnings.warn(
+            (
+                f"{reason} Falling back to a silent preview – install FluidSynth and a soundfont "
+                "for full audio rendering."
+            ),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        placeholder = _placeholder_audio_from_midi(midi_payload)
+        return _add_fx_layer(placeholder) if add_vinyl_fx else placeholder
+
+    soundfont_path = resolve_soundfont_path(soundfont)
 
     if soundfont_path is None:
-        raise RuntimeError(
-            "No soundfont found. Install FluidSynth and a compatible .sf2 soundfont to enable audio rendering."
+        return _fallback(
+            "No soundfont found. "
+            f"Set {SOUNDFONT_ENV_VAR} or place a General MIDI .sf2 next to the app."
         )
 
+    fluidsynth_exec = resolve_fluidsynth_executable()
+    if fluidsynth_exec is None:
+        return _fallback("FluidSynth executable not available.")
+
     with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as midi_file:
-        midi_file.write(midi_bytes.getvalue())
+        midi_file.write(midi_payload)
         midi_path = midi_file.name
 
     wav_path = midi_path.replace(".mid", ".wav")
-    cmd = ["fluidsynth", "-ni", soundfont_path, midi_path, "-F", wav_path, "-r", "44100"]
+    cmd = [fluidsynth_exec, "-ni", soundfont_path, midi_path, "-F", wav_path, "-r", "44100"]
 
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -433,6 +467,8 @@ def midi_to_audio(midi_bytes: io.BytesIO, *, soundfont: str | None = None, add_v
         if add_vinyl_fx:
             audio = _add_fx_layer(audio)
         return audio
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError, CouldntDecodeError) as exc:
+        return _fallback(f"FluidSynth rendering failed ({exc}).")
     finally:
         if os.path.exists(midi_path):
             os.remove(midi_path)

@@ -21,6 +21,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+src/lofi_symphony/_vendor/fluidsynth/
+src/lofi_symphony/_vendor/soundfonts/
 
 # Virtual environments
 .env
