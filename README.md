@@ -115,13 +115,21 @@ Prefer to stay in your own shell instead of the bundled launcher? Create a virtu
 python -m venv .venv
 source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-./scripts/run_local.sh      # Windows PowerShell: ./scripts/run_local.ps1
 ```
 
-The shell and PowerShell helpers keep the Streamlit server bound to localhost, disable telemetry, and honour the prompt safeguards defined in `.streamlit/config.toml`. Pass arguments after `--` to forward them straight to Streamlit (for example `./scripts/run_local.sh -- --server.port 8502`). If you prefer not to use the helpers, run `python -m streamlit run src/lofi_symphony/app.py` from an environment where `src/` is on `PYTHONPATH`.
+```bash
+# POSIX
+./scripts/run_local.sh
+# PowerShell
+./scripts/run_local.ps1
+```
+
+No account or email is required. Telemetry is disabled via config/env.
+
+The shell and PowerShell helpers keep the Streamlit server bound to localhost, disable telemetry, and honour the prompt safeguards defined in `.streamlit/config.toml`. Pass arguments after `--` to forward them straight to Streamlit (for example `./scripts/run_local.sh -- --server.port 8502`). If you prefer not to use the helpers, run `python -m streamlit run src/lofi_symphony/app.py` from the project root.
 
 ## 🔒 Deployment hardening checklist
-- Review `.streamlit/config.toml` before hosting the app. The checked-in template locks the server to `127.0.0.1`, keeps CORS/XSRF protections enabled, caps uploads at 50 MB and disables telemetry. Adjust those values deliberately when exposing the UI beyond localhost.
+- Review `.streamlit/config.toml` before hosting the app. The checked-in template hides Streamlit's email prompt and disables telemetry; adjust those values deliberately when exposing the UI beyond localhost.
 - Before each release, run `pip-audit -r requirements.txt --progress-spinner off` (or integrate it into CI) to confirm the dependency set remains free of known CVEs.
 
 ## 🛠️ Development
