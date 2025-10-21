@@ -31,13 +31,13 @@ import plotly.graph_objects as go
 import pretty_midi
 import streamlit as st
 
-from .audiocraft_integration import (
+from lofi_symphony.audiocraft_integration import (
     AudiocraftSettings,
     AudiocraftUnavailable,
     generate_musicgen_backing,
     render_musicgen,
 )
-from .generator import (
+from lofi_symphony.generator import (
     AVAILABLE_INSTRUMENTS,
     MOOD_TEMPO,
     TYPE_INSTRUMENTS,
@@ -47,8 +47,8 @@ from .generator import (
     generate_structured_song,
     midi_to_audio,
 )
-from .midi_input import MidiBackendUnavailable, MidiInputManager, MidiMessage
-from .timeline import Timeline, TimelineEvent, dataframe_for_display
+from lofi_symphony.midi_input import MidiBackendUnavailable, MidiInputManager, MidiMessage
+from lofi_symphony.timeline import Timeline, TimelineEvent, dataframe_for_display
 
 
 KEYBOARD_NOTES = [
