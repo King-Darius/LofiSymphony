@@ -21,7 +21,7 @@ def _load_mido():
         raise MidiBackendUnavailable("Install `mido` and `python-rtmidi` to enable MIDI input.") from exc
 
 
-@dataclass(slots=True)
+@dataclass
 class MidiMessage:
     note: int
     velocity: int

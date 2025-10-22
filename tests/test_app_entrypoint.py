@@ -39,6 +39,7 @@ def test_app_script_sets_up_package_context():
         assert module.__package__ == "lofi_symphony"
         assert src_str in sys.path
         assert "lofi_symphony" in sys.modules
+        assert sys.modules["lofi_symphony.app"] is module
     finally:
         sys.modules.pop(module_name, None)
 

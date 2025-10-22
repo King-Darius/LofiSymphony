@@ -15,7 +15,7 @@ import pretty_midi
 from .generator import INSTRUMENT_PROGRAMS
 
 
-@dataclass(slots=True)
+@dataclass
 class TimelineEvent:
     """A single note or clip stored on the timeline."""
 
