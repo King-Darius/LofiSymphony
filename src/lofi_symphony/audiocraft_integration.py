@@ -36,7 +36,7 @@ class _MusicGen(Protocol):
         ...
 
 
-@dataclass(slots=True)
+@dataclass
 class AudiocraftSettings:
     """Configuration for a MusicGen generation request."""
 

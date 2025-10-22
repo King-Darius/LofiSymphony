@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import importlib
 import importlib.util
 import random
 import time
@@ -26,6 +27,13 @@ if __package__ in {None, ""}:  # pragma: no cover - defensive import guard
     if src_str not in sys.path:
         sys.path.insert(0, src_str)
     __package__ = "lofi_symphony"
+
+    # Ensure the canonical package module is available so absolute imports
+    # succeed even when Streamlit executes this file as a loose script.
+    importlib.import_module(__package__)
+
+    canonical_name = f"{__package__}.app"
+    sys.modules.setdefault(canonical_name, sys.modules[__name__])
 
 import pandas as pd
 import plotly.graph_objects as go
