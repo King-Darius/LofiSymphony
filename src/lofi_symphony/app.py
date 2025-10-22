@@ -15,25 +15,64 @@ from typing import Any, Sequence
 
 
 if __package__ in {None, ""}:  # pragma: no cover - defensive import guard
-    # Allow running ``python src/lofi_symphony/app.py`` without installation by
-    # ensuring the source layout is importable and the module knows its package
-    # name. The resolved path stays within the current process and is never
-    # exposed externally.
+    # Allow running ``python -m streamlit run lofi_symphony/app.py`` without
+    # installation by deriving the package context from the file location. The
+    # resolved path stays within the current process and is never exposed
+    # externally.
     from pathlib import Path
+    from types import ModuleType
 
+    module = sys.modules[__name__]
     package_dir = Path(__file__).resolve().parent
-    src_root = package_dir.parent
-    src_str = str(src_root)
-    if src_str not in sys.path:
-        sys.path.insert(0, src_str)
-    __package__ = "lofi_symphony"
 
-    # Ensure the canonical package module is available so absolute imports
-    # succeed even when Streamlit executes this file as a loose script.
-    importlib.import_module(__package__)
+    package_parts: list[str] = []
+    search_root = package_dir
+    while (search_root / "__init__.py").exists():
+        package_parts.append(search_root.name)
+        search_root = search_root.parent
 
-    canonical_name = f"{__package__}.app"
-    sys.modules.setdefault(canonical_name, sys.modules[__name__])
+    if not package_parts:
+        package_name = package_dir.name
+    else:
+        package_name = ".".join(reversed(package_parts))
+
+    sys_path_entry = str(search_root)
+    if sys_path_entry not in sys.path:
+        sys.path.insert(0, sys_path_entry)
+
+    module.__package__ = package_name
+
+    canonical_name = f"{package_name}.app"
+    spec = importlib.util.spec_from_file_location(canonical_name, __file__)
+    if spec is not None:
+        module.__spec__ = spec
+        if spec.loader is not None:
+            module.__loader__ = spec.loader
+
+    sys.modules.setdefault(canonical_name, module)
+
+    if package_name not in sys.modules:
+        try:
+            importlib.import_module(package_name)
+        except ImportError:
+            fallback = ModuleType(package_name)
+            fallback.__file__ = str(package_dir / "__init__.py")
+            fallback.__package__ = package_name
+            fallback.__path__ = [str(package_dir)]
+            fallback_spec = importlib.util.spec_from_loader(
+                package_name, loader=None, origin=fallback.__file__
+            )
+            if fallback_spec is not None:
+                fallback_spec.submodule_search_locations = list(fallback.__path__)
+                fallback.__spec__ = fallback_spec
+            sys.modules[package_name] = fallback
+
+    package_module = sys.modules.get(package_name)
+    if package_module is not None and not hasattr(package_module, "app"):
+        try:
+            setattr(package_module, "app", module)
+        except Exception:
+            pass
 
 import pandas as pd
 import plotly.graph_objects as go
