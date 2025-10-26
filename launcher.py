@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Iterable
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 VENV_DIR = PROJECT_ROOT / ".lofi_venv"
@@ -28,6 +30,8 @@ DEPS_SENTINEL = VENV_DIR / ".deps_installed"
 PROFILE_SENTINEL = VENV_DIR / ".install_profile"
 FFMPEG_SENTINEL = VENV_DIR / ".ffmpeg_path"
 SPACY_MODEL_SENTINEL = VENV_DIR / ".spacy_en_core_web_sm"
+OPTIONAL_FAILURES_SENTINEL = VENV_DIR / ".optional_failures.json"
+OPTIONAL_FAILURES_ENV_VAR = "LOFI_SYMPHONY_OPTIONAL_FAILURES"
 LAUNCH_ENTRYPOINT = "lofi_symphony"
 
 CORE_PROFILE = "core"
@@ -43,6 +47,9 @@ CORE_RUNTIME_REQUIREMENTS: dict[str, str] = {
     "pandas": "pandas",
     "plotly": "plotly",
     "fluidsynth": "pyfluidsynth",
+}
+
+BEST_EFFORT_RUNTIME_REQUIREMENTS: dict[str, str] = {
     "torch": "torch==2.1.2",
     "torchaudio": "torchaudio==2.1.2",
     "audiocraft": "audiocraft==1.0.0",
@@ -74,28 +81,42 @@ def _write_installed_profile(profile: str) -> None:
 
 
 def _check_python_version() -> None:
-    if sys.version_info < (3, 9) or sys.version_info >= (3, 12):
+    if sys.version_info < (3, 9) or sys.version_info >= (3, 13):
         raise LauncherError(
-            "Python 3.9–3.11 is required to bootstrap LofiSymphony. "
+            "Python 3.9–3.12 is required to bootstrap LofiSymphony. "
             "Install a compatible interpreter from https://www.python.org/downloads/ and rerun the launcher."
         )
 
 
 def _run_command(
-    command: list[str], *, cwd: Path | None = None, extra_help: str | None = None
+    command: list[str], *, cwd: Path | None = None, extra_help: str | None = None, retries: int = 0
 ) -> None:
     display_cmd = " ".join(command)
     _debug(f"Running: {display_cmd}")
-    try:
-        subprocess.run(command, cwd=cwd, check=True)
-    except subprocess.CalledProcessError as exc:  # pragma: no cover - defensive
-        message = (
-            f"Command failed with exit code {exc.returncode}: {display_cmd}\n"
-            "Check your internet connection and try again."
-        )
-        if extra_help:
-            message = f"{message}\n\n{extra_help}"
-        raise LauncherError(message) from exc
+    attempt = 0
+    last_exc: subprocess.CalledProcessError | None = None
+    while attempt <= retries:
+        try:
+            subprocess.run(command, cwd=cwd, check=True)
+        except subprocess.CalledProcessError as exc:  # pragma: no cover - defensive
+            last_exc = exc
+            attempt += 1
+            if attempt > retries:
+                break
+            _debug(
+                "Command failed – retrying once the network settles …"
+            )
+        else:
+            return
+
+    assert last_exc is not None  # for type checkers
+    message = (
+        f"Command failed with exit code {last_exc.returncode}: {display_cmd}\n"
+        "Check your internet connection and try again."
+    )
+    if extra_help:
+        message = f"{message}\n\n{extra_help}"
+    raise LauncherError(message) from last_exc
 
 
 def _create_virtualenv(force_recreate: bool) -> None:
@@ -112,6 +133,7 @@ def _create_virtualenv(force_recreate: bool) -> None:
 
 
 def _install_dependencies(*, upgrade: bool, profile: str) -> None:
+    _clear_optional_failure_state()
     installed_profile = _read_installed_profile()
     if DEPS_SENTINEL.exists() and installed_profile == profile and not upgrade:
         _debug("Dependencies already installed for the requested profile – skipping install step.")
@@ -126,7 +148,10 @@ def _install_dependencies(*, upgrade: bool, profile: str) -> None:
 
     # Upgrade pip/setuptools first for better wheel compatibility.
     _debug("Upgrading pip and build backends …")
-    _run_command([str(PYTHON_BIN), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
+    _run_command(
+        [str(PYTHON_BIN), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+        retries=1,
+    )
 
     install_target = ".[audio]" if profile in {CORE_PROFILE, MUSICGEN_PROFILE} else "."
     command = [str(PYTHON_BIN), "-m", "pip", "install"]
@@ -135,7 +160,14 @@ def _install_dependencies(*, upgrade: bool, profile: str) -> None:
     command.append(install_target)
 
     _debug("Installing project dependencies – this might take a while on first launch …")
-    _run_command(command, cwd=PROJECT_ROOT)
+    _run_command(command, cwd=PROJECT_ROOT, retries=1)
+
+    _, optional_requirements = _runtime_requirements_for_current_python(profile)
+    if optional_requirements:
+        _debug(
+            "Attempting to install optional MusicGen helpers automatically. Failures are logged but never block launch."
+        )
+        _install_optional_packages(optional_requirements.values(), upgrade=upgrade)
 
     if profile == MUSICGEN_PROFILE:
         _debug(
@@ -158,22 +190,110 @@ def _detect_missing_modules(requirements: dict[str, str]) -> list[str]:
     return missing
 
 
-def _ensure_runtime_requirements(*, profile: str, upgrade: bool) -> None:
+def _runtime_requirements_for_current_python(profile: str) -> tuple[dict[str, str], dict[str, str]]:
     requirements = dict(CORE_RUNTIME_REQUIREMENTS)
+    optional_requirements = dict(BEST_EFFORT_RUNTIME_REQUIREMENTS)
+
     if profile == MUSICGEN_PROFILE:
         requirements.update(MUSICGEN_RUNTIME_REQUIREMENTS)
 
-    missing = _detect_missing_modules(requirements)
-    if not missing:
-        _debug("Verified Python packages are present.")
+    if sys.version_info >= (3, 12):
+        _debug(
+            "Python 3.12 detected – optional MusicGen dependencies will be attempted automatically. Installation failures are non-fatal."
+        )
+
+    return requirements, optional_requirements
+
+
+def _ensure_runtime_requirements(*, profile: str, upgrade: bool) -> None:
+    requirements, optional_requirements = _runtime_requirements_for_current_python(profile)
+
+    missing_core = _detect_missing_modules(requirements)
+    if missing_core:
+        command = [str(PYTHON_BIN), "-m", "pip", "install"]
+        if upgrade:
+            command.append("--upgrade")
+        command.extend(sorted(set(missing_core)))
+        _debug(f"Installing required runtime modules: {', '.join(sorted(set(missing_core)))}")
+        _run_command(command, retries=1)
+    else:
+        _debug("Verified core Python packages are present.")
+
+    missing_optional = _detect_missing_modules(optional_requirements)
+    if missing_optional:
+        _debug(
+            "Attempting to install optional AI helpers: "
+            + ", ".join(sorted(set(missing_optional)))
+        )
+        _install_optional_packages(missing_optional, upgrade=upgrade)
+    else:
+        _remove_optional_failures(optional_requirements.values())
+
+
+def _load_optional_failure_state() -> set[str]:
+    if not OPTIONAL_FAILURES_SENTINEL.exists():
+        return set()
+    try:
+        data = json.loads(OPTIONAL_FAILURES_SENTINEL.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):  # pragma: no cover - best effort
+        return set()
+    if isinstance(data, list):
+        return {str(item) for item in data if str(item)}
+    return set()
+
+
+def _save_optional_failure_state(packages: set[str]) -> None:
+    if not packages:
+        OPTIONAL_FAILURES_SENTINEL.unlink(missing_ok=True)
+        return
+    OPTIONAL_FAILURES_SENTINEL.parent.mkdir(parents=True, exist_ok=True)
+    OPTIONAL_FAILURES_SENTINEL.write_text(
+        json.dumps(sorted(packages)), encoding="utf-8"
+    )
+
+
+def _record_optional_failures(packages: Iterable[str]) -> None:
+    state = _load_optional_failure_state()
+    state.update({package for package in packages if package})
+    _save_optional_failure_state(state)
+
+
+def _remove_optional_failures(packages: Iterable[str]) -> None:
+    state = _load_optional_failure_state()
+    removed = False
+    for package in packages:
+        if package in state:
+            state.remove(package)
+            removed = True
+    if removed:
+        _save_optional_failure_state(state)
+
+
+def _clear_optional_failure_state() -> None:
+    OPTIONAL_FAILURES_SENTINEL.unlink(missing_ok=True)
+
+
+def _install_optional_packages(packages: Iterable[str], *, upgrade: bool) -> None:
+    unique = sorted({package for package in packages if package})
+    if not unique:
         return
 
     command = [str(PYTHON_BIN), "-m", "pip", "install"]
     if upgrade:
         command.append("--upgrade")
-    command.extend(sorted(set(missing)))
-    _debug(f"Installing missing runtime modules: {', '.join(sorted(set(missing)))}")
-    _run_command(command)
+    command.extend(unique)
+
+    try:
+        _run_command(command, retries=1)
+    except LauncherError as exc:
+        _debug(
+            "Optional dependency installation failed but will be ignored: "
+            + ", ".join(unique)
+        )
+        _record_optional_failures(unique)
+        _debug(str(exc))
+    else:
+        _remove_optional_failures(unique)
 
 
 def _ensure_spacy_language_model() -> None:
@@ -192,7 +312,7 @@ def _ensure_spacy_language_model() -> None:
     SPACY_MODEL_SENTINEL.touch()
 
 
-def _ensure_ffmpeg_available() -> Path:
+def _ensure_ffmpeg_available() -> Path | None:
     if FFMPEG_SENTINEL.exists():
         try:
             cached = Path(FFMPEG_SENTINEL.read_text(encoding="utf-8").strip())
@@ -201,6 +321,7 @@ def _ensure_ffmpeg_available() -> Path:
         else:
             if cached and cached.exists():
                 return cached
+        FFMPEG_SENTINEL.unlink(missing_ok=True)
 
     ffmpeg_path_str = shutil.which("ffmpeg")
     if ffmpeg_path_str:
@@ -210,18 +331,40 @@ def _ensure_ffmpeg_available() -> Path:
 
     try:
         import imageio_ffmpeg
-    except ImportError as exc:  # pragma: no cover - safety net
-        raise LauncherError(
-            "ffmpeg is required but not installed and automatic provisioning failed. "
-            "Install ffmpeg manually and re-run the launcher."
-        ) from exc
+    except ImportError:
+        _debug("imageio-ffmpeg missing – installing automatically …")
+        try:
+            _run_command([str(PYTHON_BIN), "-m", "pip", "install", "imageio-ffmpeg"], retries=1)
+        except LauncherError as exc:  # pragma: no cover - best effort
+            _debug(
+                "Automatic imageio-ffmpeg installation failed; continuing without automatic ffmpeg provisioning."
+            )
+            FFMPEG_SENTINEL.unlink(missing_ok=True)
+            return None
+        try:
+            import imageio_ffmpeg  # type: ignore  # noqa: F401
+        except ImportError:  # pragma: no cover - defensive
+            _debug(
+                "imageio-ffmpeg still unavailable after installation; continuing without automatic ffmpeg provisioning."
+            )
+            FFMPEG_SENTINEL.unlink(missing_ok=True)
+            return None
 
-    ffmpeg_path = Path(imageio_ffmpeg.get_ffmpeg_exe())
-    if not ffmpeg_path.exists():  # pragma: no cover - defensive
-        raise LauncherError(
-            "Unable to provision ffmpeg binary automatically. "
-            "Install ffmpeg manually and re-run the launcher."
+    try:
+        ffmpeg_path = Path(imageio_ffmpeg.get_ffmpeg_exe())
+    except Exception:  # pragma: no cover - best effort
+        _debug(
+            "Automatic ffmpeg download failed; continuing without bundled ffmpeg."
         )
+        FFMPEG_SENTINEL.unlink(missing_ok=True)
+        return None
+
+    if not ffmpeg_path.exists():  # pragma: no cover - defensive
+        _debug(
+            "Downloaded ffmpeg path not found; continuing without bundled ffmpeg."
+        )
+        FFMPEG_SENTINEL.unlink(missing_ok=True)
+        return None
 
     FFMPEG_SENTINEL.write_text(str(ffmpeg_path), encoding="utf-8")
     _debug(f"Provisioned ffmpeg at {ffmpeg_path}.")
@@ -238,6 +381,7 @@ def _launch_streamlit(additional_args: list[str]) -> None:
         bin_dir = VENV_DIR / "bin"
         env["PATH"] = f"{bin_dir}:" + env.get("PATH", "")
     env["VIRTUAL_ENV"] = str(VENV_DIR)
+    env[OPTIONAL_FAILURES_ENV_VAR] = str(OPTIONAL_FAILURES_SENTINEL)
 
     try:
         ffmpeg_path = Path(FFMPEG_SENTINEL.read_text(encoding="utf-8").strip())

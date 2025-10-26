@@ -22,37 +22,32 @@ LofiSymphony is a polished Streamlit experience for generating instant LoFi insp
 
 
 ## 🚀 Quick start (no terminal required)
-Download a release zip (or clone the repo) and launch the bundled helper:
+The project ships with ready-to-run helpers so non-technical musicians can get creating without touching a terminal.
 
-1. **Windows** – double-click `Start Lofi Symphony.bat` (or run it from PowerShell).
-2. **macOS** – double-click `Start Lofi Symphony.command` (run `chmod +x` once if macOS marks it as downloaded from the web).
-3. **Linux / power users** – run `python launcher.py` from the project folder.
+1. **Download the app** – grab the latest release zip (or clone this repository) and extract it somewhere easy to find, such as your Desktop.
+2. **Open the project folder** – inside you will see platform-specific launchers alongside `launcher.py`.
+3. **Double-click the helper for your system:**
+   - **Windows** – open `Start Lofi Symphony.bat`. If Windows SmartScreen appears, click **More info** → **Run anyway**. The script automatically tries the `py` launcher and falls back to `python`, then tells you exactly where to download Python 3.9+ if it is missing.
+   - **macOS** – Control-click `Start Lofi Symphony.command`, choose **Open**, then confirm. macOS may ask the first time because the file was downloaded from the internet. The helper now checks your Python version and guides you back to [python.org](https://www.python.org/downloads/) if an upgrade is required.
+   - **Linux** – double-click the `.command` script if your file manager supports it, or right-click → **Run**. You can also open a terminal in the folder and run `python launcher.py` manually.
 
-The launcher creates an isolated `.lofi_venv` virtual environment, installs the entire core dependency set (no compilers or
-manual steps required) and then opens the Streamlit interface in your browser. Subsequent launches reuse the cached
-environment so you simply double-click and jam. Each run double-checks the essential Python packages, provisions a working
-`ffmpeg` binary (via `imageio-ffmpeg` when necessary) and fetches the `en_core_web_sm` spaCy model required by the bundled
-MusicGen support so the install won't get stuck on missing components.
+The launcher creates an isolated `.lofi_venv` virtual environment, installs the entire dependency set (no compilers or manual steps required) and then opens the Streamlit interface in your default browser. Subsequent launches reuse the cached environment so you simply double-click and jam. Each run double-checks the essential Python packages, provisions a working `ffmpeg` binary (via `imageio-ffmpeg` when possible) and fetches the `en_core_web_sm` spaCy model required by the bundled MusicGen support so the install won't get stuck on missing components. If a download temporarily fails the helper retries automatically, and if it still can't provision extras such as `ffmpeg` it simply skips them and continues to launch the UI with a friendly reminder in the console.
 
-> MusicGen support ships enabled by default. The first launch downloads PyTorch, torchaudio and Audiocraft, so expect a larger
-> initial setup. If the install fails, rerun `python launcher.py --upgrade` (add `--reset` to recreate the environment) after
-> installing the Microsoft C++ Build Tools on Windows or the equivalent compiler toolchain on macOS/Linux.
+> MusicGen support ships enabled by default. The first launch downloads PyTorch, torchaudio and Audiocraft, so expect a larger initial setup. If the install fails, rerun `python launcher.py --upgrade` (add `--reset` to recreate the environment) after installing the Microsoft C++ Build Tools on Windows or the equivalent compiler toolchain on macOS/Linux.
 
 Prefer setting everything up manually? Skip ahead to [run locally from a terminal](#-run-locally-from-a-terminal) for a slim, developer-friendly workflow.
 
-### What to expect on first launch
+### Step-by-step walkthrough (first launch)
 
-1. The launcher checks that a compatible Python (3.9–3.11) is available. If not, install one from [python.org](https://www.python.org/downloads/) first.
+1. When the helper opens, leave the window visible. It checks that Python 3.9–3.12 is installed and tells you what to download if it is not.
 2. A `.lofi_venv` folder appears beside `launcher.py`; this is your self-contained environment.
-3. Dependencies are downloaded (this can take a few minutes the first time because PyTorch, torchaudio and Audiocraft are
-   installed as part of the default bundle).
-4. Streamlit starts automatically and opens a browser tab at [http://localhost:8501](http://localhost:8501). If a tab does not open, copy the displayed URL into your browser manually.
-5. Use the **Generator**, **Performance** and **Timeline** tabs to create ideas. Stop the app at any time with `Ctrl+C` in the launcher window.
+3. The launcher downloads dependencies. This can take several minutes the first time because PyTorch, torchaudio and Audiocraft are part of the default bundle—keep the window open until the prompts stop.
+4. Streamlit starts automatically and opens a browser tab at [http://localhost:8501](http://localhost:8501). If a tab does not appear, copy the displayed URL into your browser manually.
+5. Make music! Explore the **Generator**, **Performance** and **Timeline** tabs. Close the browser tab and press `Ctrl+C` (or `⌘`+`.` on macOS) in the launcher window when you are done.
 
-On subsequent launches the launcher reuses the cached environment, so you will jump straight to step 4.
+On subsequent launches the helper reuses the cached environment, so you will jump straight to step 4.
 
-> **Need to pre-download dependencies?** Run `launcher.py --prepare-only` to bootstrap everything without starting the UI, or use
-> `launcher.py --reset` to recreate the environment from scratch.
+> **Need to pre-download dependencies?** Run `launcher.py --prepare-only` to bootstrap everything without starting the UI, or use `launcher.py --reset` to recreate the environment from scratch.
 
 ### System requirements for audio rendering
 The launcher provisions every Python dependency automatically, but FluidSynth-based audio still depends on a native `fluidsynth`
@@ -87,32 +82,39 @@ MusicGen generation requires `audiocraft`, `torch` and `torchaudio`. CPU inferen
 time. The launcher and published wheels install these packages automatically and pin to the vetted PyTorch CPU wheels. On first
 launch the app now preloads the `facebook/musicgen-small` checkpoint so prompt-based rendering is ready immediately, and the
 **MusicGen setup** sidebar expander surfaces status messages, a model picker (small/medium/large) and a one-click verifier if you
-ever need to re-download a checkpoint. If the packages fail to install, rerun `launcher.py --upgrade` (add `--reset` to recreate the
-environment) after installing the Microsoft C++ Build Tools on Windows or the relevant compiler toolchain on macOS/Linux – the UI
-will gracefully fall back to MIDI-only features until everything is available.
+ever need to re-download a checkpoint. The launcher retries these downloads on every run; if pip still cannot compile them (common
+on fresh Python 3.12 builds until wheels arrive), the UI shows a friendly reminder while MIDI-first features continue working. Rerun
+`launcher.py --upgrade` (add `--reset` to recreate the environment) after installing the Microsoft C++ Build Tools on Windows or the relevant
+compiler toolchain on macOS/Linux to retry immediately.
 
 ## 🧪 Running the app
-Launch the web UI with either the console entry point installed by the package or the classic Streamlit command:
+Launch the web UI with either the console entry point installed by the package
+or by invoking the module directly:
 
 ```bash
-# Via the packaged console script
-lofi-symphony
+# Via the packaged console script (forward Streamlit flags after `--`)
+lofi-symphony -- --server.headless true
 
-# or manually
-streamlit run lofi_symphony/app.py
+# Equivalent module invocation
+python -m lofi_symphony
 ```
 
-If you prefer working directly from the source tree, run the package as a module
-so Python sets up the package context correctly:
+If you prefer working directly from the source tree, you can start Streamlit in
+place without installing the wheel:
 
 ```bash
-python -m lofi_symphony
+# Classic Streamlit invocation from the repository root
+streamlit run src/lofi_symphony/app.py
 
-# or invoke the Streamlit script in place
-python src/lofi_symphony/app.py
+# Or ask Python to proxy to Streamlit automatically
+python src/lofi_symphony/app.py -- --server.port 8502
 ```
 
 The interface opens in your browser. Use the **Generator** tab for structured MIDI ideas, **Performance** for live capture, and **Timeline** to polish or export the arrangement. Hit **Generate progression** to seed the session, improvise with the keyboard or a USB MIDI controller, then audition and download the resulting stems.
+> Running on Python 3.12? The launcher still attempts to download torch,
+> torchaudio, audiocraft and spaCy for you. If wheels are not yet published, the
+> installer logs the failure and the UI explains that MusicGen features are in a
+> reduced mode until you retry.
 
 ### Importing existing material
 Bring in ideas you've sketched elsewhere by using the new import controls at the top of the **Timeline** tab. Upload a JSON file that was exported from LofiSymphony to restore the full arrangement, or drop in a MIDI file to merge its clips with your current session.

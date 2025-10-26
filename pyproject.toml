@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Streamlit app and toolkit for crafting quick LoFi ideas"
 authors = [{name = "LofiSymphony"}]
 readme = "README.md"
-requires-python = ">=3.9,<3.12"
+requires-python = ">=3.9,<3.13"
 license = {file = "LICENSE"}
 keywords = ["music", "lofi", "streamlit", "midi"]
 dependencies = [
@@ -23,10 +23,10 @@ dependencies = [
     "pandas>=2.0",
     "plotly>=5.18",
     "imageio-ffmpeg>=0.4.9",
-    "torch==2.1.2",
-    "torchaudio==2.1.2",
-    "audiocraft==1.0.0",
-    "spacy==3.5.2",
+    "torch==2.1.2; python_version < \"3.12\"",
+    "torchaudio==2.1.2; python_version < \"3.12\"",
+    "audiocraft==1.0.0; python_version < \"3.12\"",
+    "spacy==3.5.2; python_version < \"3.12\"",
 ]
 
 [project.optional-dependencies]
