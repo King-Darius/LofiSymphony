@@ -9,3 +9,7 @@ python-rtmidi>=1.5.8
 pandas>=2.0
 plotly>=5.18
 imageio-ffmpeg>=0.4.9
+torch==2.1.2
+torchaudio==2.1.2
+audiocraft==1.0.0
+spacy==3.5.2

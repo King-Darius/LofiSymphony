@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import hashlib
+import io
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -15,6 +17,7 @@ def fake_vendor_root(tmp_path, monkeypatch):
     vendor_root = tmp_path / "_vendor"
     vendor_root.mkdir()
     monkeypatch.setattr(assets, "_package_vendor_root", lambda: vendor_root)
+    monkeypatch.setattr(assets, "_USER_SOUNDFONT_DIR", tmp_path / "user_soundfonts")
     return vendor_root
 
 
@@ -95,3 +98,107 @@ def test_resolve_soundfont_falls_back_to_default(tmp_path, monkeypatch, fake_ven
     default_path.write_text("")
 
     assert assets.resolve_soundfont_path() == str(default_path)
+
+
+def test_resolve_soundfont_picks_user_directory(tmp_path, fake_vendor_root):
+    user_dir = assets._USER_SOUNDFONT_DIR
+    user_dir.mkdir(parents=True, exist_ok=True)
+    user_font = user_dir / "custom.sf3"
+    user_font.write_text("")
+
+    assert assets.resolve_soundfont_path() == str(user_font)
+
+
+def test_recommended_soundfonts_expose_curated_list():
+    sources = assets.recommended_soundfonts()
+    assert {source.slug for source in sources} >= {"timgm6mb", "fluidr3mono"}
+
+
+class _FakeResponse(io.BytesIO):
+    def __init__(self, payload: bytes):
+        super().__init__(payload)
+        self.headers = {"Content-Length": str(len(payload))}
+
+    def __enter__(self):  # pragma: no cover - context protocol glue
+        return self
+
+    def __exit__(self, exc_type, exc, tb):  # pragma: no cover - context protocol glue
+        return False
+
+
+def test_download_soundfont_streams_and_verifies(tmp_path, monkeypatch):
+    payload = b"sf2-bytes"
+    checksum = hashlib.sha256(payload).hexdigest()
+    source = assets.SoundfontSource(
+        slug="test",
+        name="Test Font",
+        filename="test.sf2",
+        url="https://example.com/test.sf2",
+        sha256=checksum,
+        size_mb=0.1,
+        license="Test",
+    )
+
+    progress_updates: list[tuple[int, int]] = []
+
+    def fake_urlopen(url: str):
+        assert url == source.url
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr(assets, "urlopen", fake_urlopen)
+
+    target = assets.download_soundfont(
+        source,
+        destination_dir=tmp_path,
+        progress_hook=lambda current, total: progress_updates.append((current, total)),
+    )
+
+    assert target == tmp_path / source.filename
+    assert target.read_bytes() == payload
+    assert progress_updates[-1] == (len(payload), len(payload))
+
+
+def test_download_soundfont_skips_when_present(tmp_path, monkeypatch):
+    payload = b"cached"
+    checksum = hashlib.sha256(payload).hexdigest()
+    source = assets.SoundfontSource(
+        slug="cached",
+        name="Cached Font",
+        filename="cached.sf2",
+        url="https://example.com/cached.sf2",
+        sha256=checksum,
+        size_mb=0.1,
+        license="Test",
+    )
+
+    existing = tmp_path / source.filename
+    existing.write_bytes(payload)
+
+    def fail_urlopen(url: str):  # pragma: no cover - should not be called
+        raise AssertionError("download attempted despite valid cache")
+
+    monkeypatch.setattr(assets, "urlopen", fail_urlopen)
+
+    result = assets.download_soundfont(source, destination_dir=tmp_path)
+    assert result == existing
+
+
+def test_download_soundfont_raises_on_checksum_mismatch(tmp_path, monkeypatch):
+    payload = b"tampered"
+    source = assets.SoundfontSource(
+        slug="bad",
+        name="Bad Font",
+        filename="bad.sf2",
+        url="https://example.com/bad.sf2",
+        sha256="deadbeef",
+        size_mb=0.1,
+        license="Test",
+    )
+
+    monkeypatch.setattr(assets, "urlopen", lambda url: _FakeResponse(payload))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        assets.download_soundfont(source, destination_dir=tmp_path)
+
+    assert "Checksum mismatch" in str(excinfo.value)
+    assert not (tmp_path / source.filename).exists()

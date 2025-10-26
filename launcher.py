@@ -4,7 +4,9 @@ This script automates environment preparation so end users can double-click
 ``launcher.py`` (or the provided platform-specific wrappers) and the project will
 bootstrap itself. It creates an isolated virtual environment, installs every
 core dependency from wheels, and then hands off execution to the Streamlit entry
-point. Optional MusicGen extras can be layered on top via `--with-musicgen`.
+point. MusicGen dependencies are bundled automatically; the legacy
+`--with-musicgen` flag is retained for backwards compatibility and to trigger
+spaCy language model downloads.
 """
 
 from __future__ import annotations
@@ -41,14 +43,13 @@ CORE_RUNTIME_REQUIREMENTS: dict[str, str] = {
     "pandas": "pandas",
     "plotly": "plotly",
     "fluidsynth": "pyfluidsynth",
-}
-
-MUSICGEN_RUNTIME_REQUIREMENTS: dict[str, str] = {
     "torch": "torch==2.1.2",
     "torchaudio": "torchaudio==2.1.2",
     "audiocraft": "audiocraft==1.0.0",
     "spacy": "spacy==3.5.2",
 }
+
+MUSICGEN_RUNTIME_REQUIREMENTS: dict[str, str] = {}
 
 
 class LauncherError(RuntimeError):
@@ -137,7 +138,9 @@ def _install_dependencies(*, upgrade: bool, profile: str) -> None:
     _run_command(command, cwd=PROJECT_ROOT)
 
     if profile == MUSICGEN_PROFILE:
-        _install_musicgen_extras(upgrade=upgrade)
+        _debug(
+            "MusicGen dependencies are bundled with the core install – skipping legacy extras installer."
+        )
 
     DEPS_SENTINEL.touch()
     _write_installed_profile(profile)
@@ -145,41 +148,6 @@ def _install_dependencies(*, upgrade: bool, profile: str) -> None:
     _ensure_ffmpeg_available()
     if profile == MUSICGEN_PROFILE:
         _ensure_spacy_language_model()
-
-
-def _install_musicgen_extras(*, upgrade: bool) -> None:
-    _debug("Installing MusicGen extras (torch, torchaudio, audiocraft, spaCy) …")
-
-    torch_command = [
-        str(PYTHON_BIN),
-        "-m",
-        "pip",
-        "install",
-    ]
-    if upgrade:
-        torch_command.append("--upgrade")
-    torch_command.extend(
-        [
-            "--extra-index-url",
-            "https://download.pytorch.org/whl/cpu",
-            "torch==2.1.2",
-            "torchaudio==2.1.2",
-        ]
-    )
-    _run_command(torch_command)
-
-    extras_command = [str(PYTHON_BIN), "-m", "pip", "install"]
-    if upgrade:
-        extras_command.append("--upgrade")
-    extras_command.extend(["audiocraft==1.0.0", "spacy==3.5.2"])
-    extra_help = None
-    if IS_WINDOWS:
-        extra_help = (
-            "MusicGen extras require native build tools on Windows. Install the "
-            "Microsoft C++ Build Tools from https://visualstudio.microsoft.com/downloads/ "
-            "before enabling MusicGen support."
-        )
-    _run_command(extras_command, extra_help=extra_help)
 
 
 def _detect_missing_modules(requirements: dict[str, str]) -> list[str]:
@@ -309,8 +277,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--with-musicgen",
         action="store_true",
         help=(
-            "Install optional MusicGen dependencies (torch, torchaudio, audiocraft). "
-            "These packages are sizeable and may require native build tools on Windows."
+            "Deprecated compatibility flag. MusicGen dependencies install automatically; "
+            "use this to force downloading the spaCy language model."
         ),
     )
     parser.add_argument(

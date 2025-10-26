@@ -7,9 +7,9 @@ LofiSymphony is a polished Streamlit experience for generating instant LoFi insp
 - Real-time performance desk featuring an on-screen keyboard, USB MIDI capture and take recorder.
 - Arrange sections in a tactile timeline editor, quantise grooves and export stems instantly.
 - Import MIDI or previously exported JSON timelines directly into the arranger.
-- Optional Audiocraft MusicGen integration for text-to-music ideas and MIDI/MusicGen hybrid renders.
+- Built-in Audiocraft MusicGen integration for text-to-music ideas and MIDI/MusicGen hybrid renders.
 - Genre-aware chord palettes, melodies and bass lines powered by `pretty_midi` and `music21`.
-- Humanised rhythms, drum grooves and optional vinyl texture overlay.
+- Humanised rhythms, drum grooves and a sidebar toggle for the vinyl texture overlay.
 - One-click MIDI export plus FluidSynth-powered audio rendering (when available).
 - Packaged for simple installation -- ship it as a tool or embed in your workflow.
 
@@ -31,12 +31,12 @@ Download a release zip (or clone the repo) and launch the bundled helper:
 The launcher creates an isolated `.lofi_venv` virtual environment, installs the entire core dependency set (no compilers or
 manual steps required) and then opens the Streamlit interface in your browser. Subsequent launches reuse the cached
 environment so you simply double-click and jam. Each run double-checks the essential Python packages, provisions a working
-`ffmpeg` binary (via `imageio-ffmpeg` when necessary) and fetches the `en_core_web_sm` spaCy model automatically when you
-enable MusicGen support, so the install won't get stuck on missing components.
+`ffmpeg` binary (via `imageio-ffmpeg` when necessary) and fetches the `en_core_web_sm` spaCy model required by the bundled
+MusicGen support so the install won't get stuck on missing components.
 
-> Want Audiocraft/MusicGen integration as well? Run `python launcher.py --with-musicgen` once the base environment is ready.
-> Those optional packages pull in PyTorch and spaCy, so the download is larger and Windows users still need the Microsoft C++
-> Build Tools before enabling the flag.
+> MusicGen support ships enabled by default. The first launch downloads PyTorch, torchaudio and Audiocraft, so expect a larger
+> initial setup. If the install fails, rerun `python launcher.py --upgrade` (add `--reset` to recreate the environment) after
+> installing the Microsoft C++ Build Tools on Windows or the equivalent compiler toolchain on macOS/Linux.
 
 Prefer setting everything up manually? Skip ahead to [run locally from a terminal](#-run-locally-from-a-terminal) for a slim, developer-friendly workflow.
 
@@ -44,7 +44,8 @@ Prefer setting everything up manually? Skip ahead to [run locally from a termina
 
 1. The launcher checks that a compatible Python (3.9–3.11) is available. If not, install one from [python.org](https://www.python.org/downloads/) first.
 2. A `.lofi_venv` folder appears beside `launcher.py`; this is your self-contained environment.
-3. Dependencies are downloaded (this can take a few minutes the first time; add `--with-musicgen` later if you want the optional Audiocraft packages).
+3. Dependencies are downloaded (this can take a few minutes the first time because PyTorch, torchaudio and Audiocraft are
+   installed as part of the default bundle).
 4. Streamlit starts automatically and opens a browser tab at [http://localhost:8501](http://localhost:8501). If a tab does not open, copy the displayed URL into your browser manually.
 5. Use the **Generator**, **Performance** and **Timeline** tabs to create ideas. Stop the app at any time with `Ctrl+C` in the launcher window.
 
@@ -72,19 +73,23 @@ each launch.
   sudo apt-get install fluidsynth fluid-soundfont-gm
   ```
 
-Any General MIDI `.sf2` soundfont will work. Good starting points include the
-[FluidR3 GM soundfont](https://member.keymusician.com/Member/FluidR3_GM/index.html) and
-[MuseScore General](https://musescore.org/en/handbook/3/soundfonts-and-sfz-files#list). Place the `.sf2` file in the project
-folder (next to `launcher.py`) or reference an absolute path by setting the `LOFI_SYMPHONY_SOUNDFONT` environment variable. If
-the variable is unset, LofiSymphony first checks the bundled TimGM6mb copy and then searches for `*.sf2` files alongside the app
-before falling back to system-wide installs.
+Any General MIDI `.sf2` or `.sf3` soundfont will work. Good starting points include
+[FluidR3Mono GM (SF3)](https://github.com/musescore/MuseScore/blob/master/share/sound/FluidR3Mono_GM.sf3) and the
+bundled [TimGM6mb](https://member.keymusician.com/Member/FluidR3_GM/index.html#TimGM6mb). Place the file in the project
+folder (next to `launcher.py`) or reference an absolute path by setting the `LOFI_SYMPHONY_SOUNDFONT` environment variable.
+If the variable is unset, LofiSymphony first checks the bundled TimGM6mb copy, then `~/.lofi_symphony/soundfonts`
+(where in-app downloads are stored), followed by any `*.sf2`/`*.sf3` files alongside the app before falling back to
+system-wide installs. The **Soundfont library** sidebar expander downloads checksum-verified fonts into that folder and
+lets you skip automatic activation if you prefer to manage overrides manually.
 
 ### Audiocraft (MusicGen) support
 MusicGen generation requires `audiocraft`, `torch` and `torchaudio`. CPU inference works, though a GPU dramatically reduces render
-time. Enable these extras by running `python launcher.py --with-musicgen` after the base environment is ready. The launcher fetches
-PyTorch CPU wheels from the official index and wires them into the managed virtual environment. If the optional packages fail to
-install, rerun `launcher.py --with-musicgen --reset` after installing the Microsoft C++ Build Tools on Windows or the relevant
-compiler toolchain on macOS/Linux – the UI will gracefully fall back to MIDI-only features until everything is available.
+time. The launcher and published wheels install these packages automatically and pin to the vetted PyTorch CPU wheels. On first
+launch the app now preloads the `facebook/musicgen-small` checkpoint so prompt-based rendering is ready immediately, and the
+**MusicGen setup** sidebar expander surfaces status messages, a model picker (small/medium/large) and a one-click verifier if you
+ever need to re-download a checkpoint. If the packages fail to install, rerun `launcher.py --upgrade` (add `--reset` to recreate the
+environment) after installing the Microsoft C++ Build Tools on Windows or the relevant compiler toolchain on macOS/Linux – the UI
+will gracefully fall back to MIDI-only features until everything is available.
 
 ## 🧪 Running the app
 Launch the web UI with either the console entry point installed by the package or the classic Streamlit command:
@@ -153,9 +158,9 @@ The shell and PowerShell helpers keep the Streamlit server bound to localhost, d
 Pull requests are welcome! Share screenshots, new progressions, or improvements to the visual design.
 
 ## ❓ Troubleshooting
-- **Audio preview unavailable** – confirm `fluidsynth` and a soundfont are installed, then restart the app.
+- **Audio preview unavailable or only vinyl noise** – confirm `fluidsynth` and a soundfont are installed, then restart the app. Toggle off "Add vinyl texture to preview audio" in the sidebar when you want a clean render.
 - **Missing dependencies** – rerun the launcher so it can reinstall the managed virtual environment (`launcher.py --reset` performs a full rebuild).
-- **MusicGen extras fail to install** – verify the Microsoft C++ Build Tools (Windows) or your platform's compiler toolchain are installed, then rerun `launcher.py --with-musicgen --reset`. Without those tools, stick with the default MIDI workflow – it ships fully packaged and won't prompt for compilers.
+- **MusicGen dependencies fail to install** – verify the Microsoft C++ Build Tools (Windows) or your platform's compiler toolchain are installed, then rerun `launcher.py --reset` (or `--upgrade`) to retry the install. Without those tools, stick with the default MIDI workflow – it ships fully packaged and won't prompt for compilers.
 - **`pip install python` errors** – grab Python directly from [python.org](https://www.python.org/downloads/) or the Microsoft Store instead of installing a `python` package via pip; the launcher will use whichever interpreter you run it with.
 
 Enjoy crafting mellow vibes with **LofiSymphony**. 🎧
