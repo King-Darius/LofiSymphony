@@ -13,7 +13,29 @@ import time
 from functools import lru_cache
 from collections import defaultdict
 from dataclasses import dataclass, replace as dataclass_replace
+from pathlib import Path
 from typing import Any, Sequence
+
+
+OPTIONAL_FAILURES_ENV_VAR = "LOFI_SYMPHONY_OPTIONAL_FAILURES"
+
+
+def _optional_installation_failures() -> list[str]:
+    sentinel = os.environ.get(OPTIONAL_FAILURES_ENV_VAR)
+    if not sentinel:
+        return []
+    path = Path(sentinel)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):  # pragma: no cover - best effort
+        return []
+    if isinstance(data, list):
+        return [str(item) for item in data if str(item)]
+    return []
+
+
 
 
 if __package__ in {None, ""}:  # pragma: no cover - defensive import guard
@@ -2159,6 +2181,14 @@ def _generator_tab(settings: SessionSettings) -> None:
 def main() -> None:
     st.set_page_config(page_title="LofiSymphony Studio", page_icon="🎵", layout="wide")
 
+    failed_optional = _optional_installation_failures()
+    if failed_optional:
+        st.warning(
+            "Optional AI features were skipped because these packages could not be installed automatically: "
+            + ", ".join(sorted(failed_optional))
+            + ". LofiSymphony is running in MIDI-only mode for now – rerun the launcher after installing a compatible toolchain or Python release to retry."
+        )
+
     _initialise_state()
     _ensure_musicgen_assets_if_needed()
     _render_css()
@@ -2188,4 +2218,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    import os
+    import sys
+    from pathlib import Path
+
+    if os.environ.get("LOFI_SYMPHONY_STREAMLIT_BOOTSTRAPPED") == "1":
+        main()
+    else:
+        from lofi_symphony.cli import _launch_streamlit
+
+        os.environ["LOFI_SYMPHONY_STREAMLIT_BOOTSTRAPPED"] = "1"
+        _launch_streamlit(app_path=Path(__file__), streamlit_args=sys.argv[1:])
