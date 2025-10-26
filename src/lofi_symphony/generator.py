@@ -421,7 +421,12 @@ def generate_structured_song(
     return midi_bytes, sections
 
 
-def midi_to_audio(midi_bytes: io.BytesIO, *, soundfont: str | None = None, add_vinyl_fx: bool = True) -> AudioSegment:
+def midi_to_audio(
+    midi_bytes: io.BytesIO,
+    *,
+    soundfont: str | None = None,
+    add_vinyl_fx: bool = False,
+) -> AudioSegment:
     """Render a MIDI byte stream to audio using FluidSynth when available."""
 
     midi_bytes.seek(0)

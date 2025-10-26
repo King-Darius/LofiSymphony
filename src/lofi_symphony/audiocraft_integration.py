@@ -36,11 +36,14 @@ class _MusicGen(Protocol):
         ...
 
 
+DEFAULT_MUSICGEN_MODEL = "facebook/musicgen-small"
+
+
 @dataclass
 class AudiocraftSettings:
     """Configuration for a MusicGen generation request."""
 
-    model: str = "facebook/musicgen-small"
+    model: str = DEFAULT_MUSICGEN_MODEL
     prompt: str = "A warm lofi beat with dusty textures"
     duration: float = 12.0
     top_k: int = 250
@@ -56,7 +59,7 @@ def _load_musicgen(model_name: str) -> _MusicGen:
     except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
         raise AudiocraftUnavailable("Audiocraft is not installed. Install `audiocraft` to enable this feature.") from exc
 
-    model = models.MusicGen.get_pretrained(model_name)
+    model = models.MusicGen.get_pretrained(model_name, progress=True)
     model.set_generation_params(
         duration=12.0,
         top_k=250,
@@ -65,6 +68,22 @@ def _load_musicgen(model_name: str) -> _MusicGen:
         cfg_coef=3.5,
     )
     return model
+
+
+def clear_cached_musicgen() -> None:
+    """Reset the cached MusicGen loader so future calls reinitialise the model."""
+
+    _load_musicgen.cache_clear()
+
+
+def ensure_musicgen_assets(model_name: str = DEFAULT_MUSICGEN_MODEL) -> None:
+    """Ensure the requested MusicGen model is available locally.
+
+    The first invocation downloads weights via ``MusicGen.get_pretrained``. The
+    cached loader keeps the model resident for subsequent generation requests.
+    """
+
+    _load_musicgen(model_name)
 
 
 def render_musicgen(settings: AudiocraftSettings) -> Path:
@@ -101,17 +120,18 @@ def generate_musicgen_backing(
     scale: str,
     tempo: int,
     instruments: Iterable[str],
+    model: str | None = None,
 ) -> Path:
     """Produce a hybrid track that blends MIDI scaffolding with MusicGen."""
 
     midi_bytes = generate_lofi_midi(key=key, scale=scale, tempo=tempo, instruments=instruments)
-    midi_audio = midi_to_audio(midi_bytes)
+    midi_audio = midi_to_audio(midi_bytes, add_vinyl_fx=False)
     fd, temp_path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     midi_path = Path(temp_path)
     midi_audio.export(midi_path, format="wav")
 
-    settings = AudiocraftSettings(prompt=prompt)
+    settings = AudiocraftSettings(model=model or DEFAULT_MUSICGEN_MODEL, prompt=prompt)
     musicgen_path = render_musicgen(settings)
 
     try:

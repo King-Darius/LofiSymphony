@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import importlib
 import importlib.util
 import random
 import time
+from functools import lru_cache
 from collections import defaultdict
 from dataclasses import dataclass, replace as dataclass_replace
 from typing import Any, Sequence
@@ -80,10 +82,20 @@ import pretty_midi
 import streamlit as st
 
 from lofi_symphony.audiocraft_integration import (
+    DEFAULT_MUSICGEN_MODEL,
     AudiocraftSettings,
     AudiocraftUnavailable,
+    clear_cached_musicgen,
+    ensure_musicgen_assets,
     generate_musicgen_backing,
     render_musicgen,
+)
+from lofi_symphony.fluidsynth_assets import (
+    SOUNDFONT_ENV_VAR,
+    download_soundfont,
+    recommended_soundfonts,
+    resolve_fluidsynth_executable,
+    resolve_soundfont_path,
 )
 from lofi_symphony.generator import (
     AVAILABLE_INSTRUMENTS,
@@ -141,7 +153,7 @@ WORKFLOW_GUIDE_STEPS = [
     {
         "title": "Arranger",
         "highlight": "Shape sections, balance tracks and audition hooks before committing to exports.",
-        "details": "The new Arranger tab mirrors the design mockups and will evolve into the full timeline mixer.",
+        "details": "Dial per-track levels, automation and notes that feed straight into the timeline renderer.",
     },
     {
         "title": "Timeline",
@@ -149,6 +161,25 @@ WORKFLOW_GUIDE_STEPS = [
         "details": "Export MIDI, WAV and JSON when you are happy with the structure.",
     },
 ]
+
+
+MUSICGEN_MODEL_CHOICES: tuple[tuple[str, str], ...] = (
+    (DEFAULT_MUSICGEN_MODEL, "MusicGen Small (default, best balance)"),
+    ("facebook/musicgen-medium", "MusicGen Medium (higher fidelity, larger download)"),
+    ("facebook/musicgen-large", "MusicGen Large (highest quality, very large download)"),
+)
+
+_MUSICGEN_MODEL_LABELS = {model: label for model, label in MUSICGEN_MODEL_CHOICES}
+
+
+@lru_cache(maxsize=1)
+def _fluidsynth_available() -> bool:
+    return resolve_fluidsynth_executable() is not None
+
+
+@lru_cache(maxsize=1)
+def _soundfont_available() -> bool:
+    return resolve_soundfont_path(None) is not None
 
 
 DEFAULT_ARRANGER_TRACKS = [
@@ -217,6 +248,41 @@ BEATS_PER_BAR = 2.0
 MUSICGEN_AVAILABLE = importlib.util.find_spec("audiocraft") is not None
 
 
+def _musicgen_label(model: str) -> str:
+    return _MUSICGEN_MODEL_LABELS.get(model, model)
+
+
+def _musicgen_assets() -> dict[str, dict[str, str]]:
+    assets = st.session_state.setdefault(
+        "musicgen_assets", {DEFAULT_MUSICGEN_MODEL: {"state": "pending"}}
+    )
+    # Ensure entries stay mutable for downstream updates.
+    if DEFAULT_MUSICGEN_MODEL not in assets:
+        assets[DEFAULT_MUSICGEN_MODEL] = {"state": "pending"}
+    return assets
+
+
+def _update_musicgen_asset(model: str, *, state: str, message: str | None = None) -> None:
+    assets = _musicgen_assets()
+    entry = {"state": state}
+    if message:
+        entry["message"] = message
+    assets[model] = entry
+    st.session_state.musicgen_assets = assets
+
+
+def _schedule_musicgen_download(model: str, *, reset_cache: bool = False) -> None:
+    if reset_cache:
+        clear_cached_musicgen()
+    assets = _musicgen_assets()
+    assets[model] = {"state": "pending", "message": f"Preparing {_musicgen_label(model)}..."}
+    st.session_state.musicgen_assets = assets
+
+
+def _active_musicgen_model() -> str:
+    return st.session_state.get("musicgen_model", DEFAULT_MUSICGEN_MODEL)
+
+
 @dataclass(frozen=True)
 class SessionSettings:
     """Bundle the musical DNA of the active session for UI consumption."""
@@ -228,12 +294,146 @@ class SessionSettings:
     tempo: int
     rhythm: str
     instruments: Sequence[str]
+    vinyl_fx: bool
 
     def tonality(self) -> str:
         return f"{self.key} {self.scale.title()}"
 
     def instruments_label(self) -> str:
         return ", ".join(self.instruments) if self.instruments else "None"
+
+
+def _soundfont_library_panel() -> None:
+    sources = recommended_soundfonts()
+    if not sources:
+        return
+
+    messages: dict[str, tuple[str, str]] = st.session_state.setdefault("soundfont_library_messages", {})
+
+    st.sidebar.divider()
+
+    with st.sidebar.expander("🎹 Need a soundfont?"):
+        st.caption(
+            "Download curated General MIDI banks. Each file is verified with SHA-256 and stored in ``~/.lofi_symphony/soundfonts``."
+        )
+        st.checkbox(
+            "Activate downloads automatically",
+            value=st.session_state.soundfont_auto_activate,
+            key="soundfont_auto_activate",
+            help="When enabled, freshly downloaded fonts are wired straight into preview playback.",
+        )
+        auto_activate = st.session_state.soundfont_auto_activate
+
+        for source in sources:
+            st.markdown(f"**{source.name}** · {source.license} · {source.size_label()}")
+            status_placeholder = st.empty()
+
+            existing = messages.get(source.slug)
+            if existing:
+                level, text = existing
+                getattr(status_placeholder, level)(text)
+
+            button_label = f"Download {source.name}"
+            if st.button(button_label, key=f"soundfont-download-{source.slug}", use_container_width=True):
+                with st.spinner(f"Downloading {source.name}..."):
+                    try:
+                        saved_path = download_soundfont(source)
+                    except Exception as exc:  # pragma: no cover - network failures surfaced to UI
+                        messages[source.slug] = (
+                            "error",
+                            f"Download failed: {exc}",
+                        )
+                    else:
+                        saved_path_str = str(saved_path)
+                        _soundfont_available.cache_clear()
+                        _note_preview_audio.cache_clear()
+                        if auto_activate:
+                            previous_override = os.getenv(SOUNDFONT_ENV_VAR)
+                            os.environ[SOUNDFONT_ENV_VAR] = saved_path_str
+                            message = f"{source.name} saved to {saved_path_str} and activated for previews"
+                            if previous_override and previous_override != saved_path_str:
+                                message += " (previous override replaced)"
+                        else:
+                            message = (
+                                f"{source.name} saved to {saved_path_str}. Set the {SOUNDFONT_ENV_VAR} environment variable to switch previews manually."
+                            )
+                        messages[source.slug] = ("success", message)
+
+                updated = messages.get(source.slug)
+                if updated:
+                    level, text = updated
+                    status_placeholder.empty()
+                    getattr(status_placeholder, level)(text)
+
+    st.session_state["soundfont_library_messages"] = messages
+
+
+def _musicgen_resource_panel() -> None:
+    st.sidebar.divider()
+
+    with st.sidebar.expander("🎧 MusicGen setup"):
+        if not MUSICGEN_AVAILABLE:
+            st.info("Install the `audiocraft` package to unlock MusicGen downloads.")
+            return
+
+        st.caption(
+            "MusicGen checkpoints download on first run and are cached under Hugging Face's local cache directory."
+        )
+
+        selected_model = st.selectbox(
+            "Default MusicGen model",
+            options=[choice[0] for choice in MUSICGEN_MODEL_CHOICES],
+            format_func=_musicgen_label,
+            key="musicgen_model",
+            help="Choose a larger model for richer output. Bigger checkpoints require significantly more download time.",
+        )
+
+        assets = _musicgen_assets()
+        entry = assets.get(selected_model, {"state": "idle"})
+        state = entry.get("state", "idle")
+        message = entry.get("message")
+
+        if state == "ready":
+            st.success(message or f"{_musicgen_label(selected_model)} ready for prompts.")
+        elif state == "pending":
+            st.info(message or f"Preparing {_musicgen_label(selected_model)}...")
+        elif state == "error":
+            st.error(message or f"{_musicgen_label(selected_model)} unavailable. Retry download.")
+        else:
+            st.caption(message or f"{_musicgen_label(selected_model)} available for download on demand.")
+
+        st.button(
+            "Verify or re-download selected model",
+            key="musicgen-verify-download",
+            on_click=_schedule_musicgen_download,
+            kwargs={"model": selected_model, "reset_cache": True},
+            use_container_width=True,
+        )
+
+
+def _ensure_musicgen_assets_if_needed() -> None:
+    if not MUSICGEN_AVAILABLE:
+        return
+
+    assets = _musicgen_assets()
+    for model, entry in list(assets.items()):
+        if entry.get("state") != "pending":
+            continue
+
+        label = _musicgen_label(model)
+        try:
+            with st.spinner(f"Downloading {label} (first run may take a while)..."):
+                ensure_musicgen_assets(model)
+        except AudiocraftUnavailable as exc:
+            _update_musicgen_asset(model, state="error", message=str(exc))
+        except Exception as exc:  # pragma: no cover - surfacing unexpected setup errors to the UI
+            _update_musicgen_asset(
+                model,
+                state="error",
+                message=f"{label} initialisation failed: {exc}",
+            )
+        else:
+            _update_musicgen_asset(model, state="ready", message=f"{label} ready for prompts.")
 
 
 def _render_css() -> None:
@@ -548,7 +748,7 @@ def _workflow_guide() -> None:
                     <div style="width: 40px; height: 40px; border-radius: 14px; background: linear-gradient(135deg, rgba(167, 139, 250, 0.45), rgba(56, 189, 248, 0.45)); display: grid; place-items: center; font-size: 1.25rem;">🎛️</div>
                     <div>
                         <div style="font-weight: 600; color: #e0e7ff; letter-spacing: 0.05em;">Workflow guide</div>
-                        <div style="font-size: 0.85rem; color: #cbd5f5;">Mirror the GUI mockups inside Streamlit while the interactive features land.</div>
+                        <div style="font-size: 0.85rem; color: #cbd5f5;">Follow this guided tour to move from idea sparks to polished exports inside the Streamlit workstation.</div>
                     </div>
                 </div>
                 <span class="arranger-chip">Design parity roadmap</span>
@@ -866,8 +1066,8 @@ def _apply_arranger_midi_mix(midi_obj: pretty_midi.PrettyMIDI) -> None:
         instrument.control_changes = [
             cc for cc in instrument.control_changes if cc.control not in (7, 10)
         ]
-        instrument.control_changes.insert(0, pretty_midi.ControlChange(control=7, value=volume_cc, time=0.0))
-        instrument.control_changes.insert(0, pretty_midi.ControlChange(control=10, value=pan_cc, time=0.0))
+        instrument.control_changes.insert(0, pretty_midi.ControlChange(number=7, value=volume_cc, time=0.0))
+        instrument.control_changes.insert(0, pretty_midi.ControlChange(number=10, value=pan_cc, time=0.0))
 
         effects = track.get("effects") or []
         if effects:
@@ -1059,6 +1259,11 @@ def _initialise_state() -> None:
         st.session_state.musicgen_path = None
     if "arrangement_sections" not in st.session_state:
         st.session_state.arrangement_sections = None
+    if "soundfont_auto_activate" not in st.session_state:
+        st.session_state.soundfont_auto_activate = True
+    if "musicgen_model" not in st.session_state:
+        st.session_state.musicgen_model = DEFAULT_MUSICGEN_MODEL
+    _musicgen_assets()
     _initialise_arranger_state(st.session_state.arrangement_sections)
 
 
@@ -1081,7 +1286,14 @@ def _settings_panel() -> SessionSettings:
         default=suggested_instruments,
         help="Start from the recommended palette and shape your own texture.",
     )
-    st.sidebar.divider()
+    vinyl_fx_enabled = st.sidebar.toggle(
+        "Add vinyl texture to preview audio",
+        value=False,
+        help=(
+            "Overlay a gentle vinyl noise bed on timeline renders. Disable this if you prefer clean previews "
+            "or when testing raw stems."
+        ),
+    )
     st.sidebar.markdown(
         """
         <small style="color: #94a3b8;">
@@ -1092,6 +1304,9 @@ def _settings_panel() -> SessionSettings:
         unsafe_allow_html=True,
     )
 
+    _soundfont_library_panel()
+    _musicgen_resource_panel()
+
     return SessionSettings(
         key=selected_key,
         scale=selected_scale,
@@ -1100,11 +1315,52 @@ def _settings_panel() -> SessionSettings:
         tempo=selected_tempo,
         rhythm=selected_rhythm,
         instruments=selected_instruments,
+        vinyl_fx=vinyl_fx_enabled,
     )
 
 
 def _note_to_midi(note_name: str) -> int:
     return pretty_midi.note_name_to_number(note_name)
+
+
+@lru_cache(maxsize=128)
+def _note_preview_audio(note_name: str, instrument: str) -> bytes | None:
+    if not _fluidsynth_available() or not _soundfont_available():
+        return None
+
+    program = INSTRUMENT_PROGRAMS.get(instrument)
+    if program is None:
+        return None
+
+    midi_obj = pretty_midi.PrettyMIDI()
+    preview_instrument = pretty_midi.Instrument(program=program, name=f"{instrument} Preview")
+    pitch = _note_to_midi(note_name)
+    preview_instrument.notes.append(
+        pretty_midi.Note(velocity=96, pitch=pitch, start=0.0, end=0.6)
+    )
+    midi_obj.instruments.append(preview_instrument)
+
+    midi_buffer = io.BytesIO()
+    midi_obj.write(midi_buffer)
+    midi_payload = midi_buffer.getvalue()
+
+    try:
+        audio_segment = midi_to_audio(io.BytesIO(midi_payload), add_vinyl_fx=False)
+    except RuntimeWarning:
+        return None
+    except Exception:
+        return None
+
+    preview_segment = audio_segment[:800]
+    if len(preview_segment) > 0:
+        try:
+            preview_segment = preview_segment.fade_out(120)
+        except Exception:
+            pass
+
+    buffer = io.BytesIO()
+    preview_segment.export(buffer, format="wav")
+    return buffer.getvalue()
 
 
 def _update_timeline_cursor() -> None:
@@ -1157,6 +1413,10 @@ def _register_keyboard_note(note_name: str, tempo: int) -> None:
         _update_timeline_cursor()
         st.session_state.keyboard_cursor = cursor + 0.5
 
+    preview_audio = _note_preview_audio(note_name, instrument)
+    if preview_audio:
+        st.session_state.keyboard_preview_audio = preview_audio
+
 
 def _handle_midi_message(message: MidiMessage, tempo: int) -> None:
     if not st.session_state.recording:
@@ -1191,6 +1451,12 @@ def _keyboard_block(tempo: int) -> None:
     st.markdown("### On-screen keys")
     st.markdown("Tap notes to sketch ideas or use the record toggle to capture them in time.")
 
+    if not _fluidsynth_available() or not _soundfont_available():
+        st.caption(
+            "Preview audio requires FluidSynth and a General MIDI soundfont. Install them to hear the on-screen keys "
+            f"or set `{SOUNDFONT_ENV_VAR}` to the path of your .sf2 file."
+        )
+
     keyboard_cols = st.columns(len(KEYBOARD_NOTES))
     for col, note_name in zip(keyboard_cols, KEYBOARD_NOTES):
         is_sharp = "#" in note_name
@@ -1206,6 +1472,11 @@ def _keyboard_block(tempo: int) -> None:
             f"<style>div[data-testid='stButton'][key='keyboard-{note_name}'] button {{{button_style} border-radius: 14px; height: 120px;}}</style>",
             unsafe_allow_html=True,
         )
+
+    preview_placeholder = st.empty()
+    preview_payload = st.session_state.pop("keyboard_preview_audio", None)
+    if preview_payload:
+        preview_placeholder.audio(preview_payload, format="audio/wav")
 
 
 def _midi_block(tempo: int) -> None:
@@ -1430,7 +1701,19 @@ def _timeline_tab(settings: SessionSettings) -> None:
         midi_bytes.seek(0)
         st.download_button("Download timeline MIDI", midi_bytes, file_name="timeline.mid", mime="audio/midi")
 
-        audio_segment = midi_to_audio(io.BytesIO(midi_bytes.getvalue()))
+        if not _fluidsynth_available() or not _soundfont_available():
+            st.info(
+                "FluidSynth or a General MIDI soundfont is unavailable, so preview audio cannot render instruments yet. "
+                f"Install FluidSynth and set `{SOUNDFONT_ENV_VAR}` to a .sf2 file for full playback or rely on MIDI exports."
+            )
+        if settings.vinyl_fx:
+            st.caption(
+                "Vinyl texture adds a noise bed to the WAV preview. Toggle it off in Session DNA for a clean render."
+            )
+        audio_segment = midi_to_audio(
+            io.BytesIO(midi_bytes.getvalue()),
+            add_vinyl_fx=settings.vinyl_fx,
+        )
         audio_buffer = io.BytesIO()
         audio_segment.export(audio_buffer, format="wav")
         audio_buffer.seek(0)
@@ -1705,7 +1988,10 @@ def _generator_tab(settings: SessionSettings) -> None:
             st.session_state.arrangement_sections = None
             _ingest_midi_into_timeline(midi_payload)
             st.session_state.timeline.quantize(0.25)
-            audio_segment = midi_to_audio(io.BytesIO(midi_payload))
+            audio_segment = midi_to_audio(
+                io.BytesIO(midi_payload),
+                add_vinyl_fx=settings.vinyl_fx,
+            )
             audio_buffer = io.BytesIO()
             audio_segment.export(audio_buffer, format="wav")
             audio_buffer.seek(0)
@@ -1744,7 +2030,10 @@ def _generator_tab(settings: SessionSettings) -> None:
                     [],
                 ),
             }
-            audio_segment = midi_to_audio(io.BytesIO(midi_payload))
+            audio_segment = midi_to_audio(
+                io.BytesIO(midi_payload),
+                add_vinyl_fx=settings.vinyl_fx,
+            )
             audio_buffer = io.BytesIO()
             audio_segment.export(audio_buffer, format="wav")
             audio_buffer.seek(0)
@@ -1784,8 +2073,9 @@ def _generator_tab(settings: SessionSettings) -> None:
         st.caption("Send evocative prompts to craft shimmering textures and atmospheres.")
         if not MUSICGEN_AVAILABLE:
             st.info(
-                "MusicGen extras are not installed. Run `python launcher.py --with-musicgen` "
-                "in the project folder to enable text-to-music rendering."
+                "MusicGen dependencies install automatically on first launch. "
+                "If this message persists, rerun `python launcher.py --upgrade` "
+                "to retry the setup or install `lofi-symphony` in a fresh environment."
             )
         prompt = st.text_area(
             "Prompt",
@@ -1803,7 +2093,13 @@ def _generator_tab(settings: SessionSettings) -> None:
         if st.button("✨ Render with MusicGen", use_container_width=True):
             try:
                 with st.spinner("Rendering with Audiocraft..."):
-                    audio_path = render_musicgen(AudiocraftSettings(prompt=prompt, duration=duration))
+                    audio_path = render_musicgen(
+                        AudiocraftSettings(
+                            model=_active_musicgen_model(),
+                            prompt=prompt,
+                            duration=duration,
+                        )
+                    )
                 st.session_state.musicgen_path = audio_path
                 st.success("MusicGen render ready for audition.")
             except AudiocraftUnavailable as exc:
@@ -1843,6 +2139,7 @@ def _generator_tab(settings: SessionSettings) -> None:
                         scale=selected_scale,
                         tempo=selected_tempo,
                         instruments=selected_instruments,
+                        model=_active_musicgen_model(),
                     )
                 st.audio(str(blended))
                 with open(blended, "rb") as handle:
@@ -1863,6 +2160,7 @@ def main() -> None:
     st.set_page_config(page_title="LofiSymphony Studio", page_icon="🎵", layout="wide")
 
     _initialise_state()
+    _ensure_musicgen_assets_if_needed()
     _render_css()
     _render_header()
 
