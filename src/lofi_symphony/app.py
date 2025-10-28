@@ -2222,7 +2222,10 @@ if __name__ == "__main__":  # pragma: no cover
     import sys
     from pathlib import Path
 
-    if os.environ.get("LOFI_SYMPHONY_STREAMLIT_BOOTSTRAPPED") == "1":
+    already_bootstrapped = os.environ.get("LOFI_SYMPHONY_STREAMLIT_BOOTSTRAPPED") == "1"
+    running_inside_streamlit = st.runtime.exists()
+
+    if already_bootstrapped or running_inside_streamlit:
         main()
     else:
         from lofi_symphony.cli import _launch_streamlit
