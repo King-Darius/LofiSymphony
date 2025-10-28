@@ -34,6 +34,9 @@ OPTIONAL_FAILURES_SENTINEL = VENV_DIR / ".optional_failures.json"
 OPTIONAL_FAILURES_ENV_VAR = "LOFI_SYMPHONY_OPTIONAL_FAILURES"
 LAUNCH_ENTRYPOINT = "lofi_symphony"
 
+PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/cpu"
+PYTORCH_PACKAGE_NAMES = {"torch", "torchaudio", "torchvision"}
+
 CORE_PROFILE = "core"
 MUSICGEN_PROFILE = "musicgen"
 
@@ -119,6 +122,38 @@ def _run_command(
     raise LauncherError(message) from last_exc
 
 
+def _normalize_requirement_name(requirement: str) -> str:
+    name = requirement.strip()
+    if not name:
+        return ""
+
+    # Remove environment markers and extras.
+    for delimiter in (";", "["):
+        index = name.find(delimiter)
+        if index != -1:
+            name = name[:index]
+
+    # Trim version specifiers and comparison operators.
+    for operator in ("===", "==", "<=", ">=", "~=", "!=", "<", ">"):
+        index = name.find(operator)
+        if index != -1:
+            name = name[:index]
+
+    return name.strip().lower().replace("_", "-")
+
+
+def _maybe_add_pytorch_index(command: list[str], packages: Iterable[str]) -> bool:
+    for package in packages:
+        if package.strip() == ".[audio]":
+            command.extend(["--extra-index-url", PYTORCH_INDEX_URL])
+            return True
+        normalized = _normalize_requirement_name(package)
+        if normalized in PYTORCH_PACKAGE_NAMES:
+            command.extend(["--extra-index-url", PYTORCH_INDEX_URL])
+            return True
+    return False
+
+
 def _create_virtualenv(force_recreate: bool) -> None:
     if force_recreate and VENV_DIR.exists():
         _debug("Removing existing virtual environment …")
@@ -157,6 +192,9 @@ def _install_dependencies(*, upgrade: bool, profile: str) -> None:
     command = [str(PYTHON_BIN), "-m", "pip", "install"]
     if upgrade:
         command.append("--upgrade")
+    used_pytorch_index = _maybe_add_pytorch_index(command, [install_target])
+    if used_pytorch_index:
+        _debug("Using the official PyTorch wheel index to resolve audio dependencies.")
     command.append(install_target)
 
     _debug("Installing project dependencies – this might take a while on first launch …")
@@ -213,7 +251,11 @@ def _ensure_runtime_requirements(*, profile: str, upgrade: bool) -> None:
         command = [str(PYTHON_BIN), "-m", "pip", "install"]
         if upgrade:
             command.append("--upgrade")
-        command.extend(sorted(set(missing_core)))
+        normalized_missing = sorted(set(missing_core))
+        used_pytorch_index = _maybe_add_pytorch_index(command, normalized_missing)
+        if used_pytorch_index:
+            _debug("Using the official PyTorch wheel index for required runtime modules.")
+        command.extend(normalized_missing)
         _debug(f"Installing required runtime modules: {', '.join(sorted(set(missing_core)))}")
         _run_command(command, retries=1)
     else:
@@ -281,6 +323,9 @@ def _install_optional_packages(packages: Iterable[str], *, upgrade: bool) -> Non
     command = [str(PYTHON_BIN), "-m", "pip", "install"]
     if upgrade:
         command.append("--upgrade")
+    used_pytorch_index = _maybe_add_pytorch_index(command, unique)
+    if used_pytorch_index:
+        _debug("Using the official PyTorch wheel index for optional AI helpers.")
     command.extend(unique)
 
     try:
