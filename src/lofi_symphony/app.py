@@ -161,6 +161,28 @@ KEYBOARD_NOTES = [
 ]
 
 
+SCALE_INTERVALS: dict[str, tuple[int, ...]] = {
+    "major": (0, 2, 4, 5, 7, 9, 11),
+    "minor": (0, 2, 3, 5, 7, 8, 10),
+    "dorian": (0, 2, 3, 5, 7, 9, 10),
+    "mixolydian": (0, 2, 4, 5, 7, 9, 10),
+}
+
+
+KEYBOARD_OCTAVES = (
+    {
+        "label": "Octave 3",
+        "white": ("C3", "D3", "E3", "F3", "G3", "A3", "B3"),
+        "accidentals": {"C3": "C#3", "D3": "D#3", "F3": "F#3", "G3": "G#3", "A3": "A#3"},
+    },
+    {
+        "label": "Octave 4",
+        "white": ("C4", "D4", "E4", "F4", "G4", "A4", "B4"),
+        "accidentals": {"C4": "C#4", "D4": "D#4", "F4": "F#4", "G4": "G#4", "A4": "A#4"},
+    },
+)
+
+
 WORKFLOW_GUIDE_STEPS = [
     {
         "title": "Generator",
@@ -1258,6 +1280,10 @@ def _initialise_state() -> None:
         st.session_state.recording = False
     if "record_instrument" not in st.session_state:
         st.session_state.record_instrument = "Piano"
+    if "last_pressed_note" not in st.session_state:
+        st.session_state.last_pressed_note = None
+    if "keyboard_velocity" not in st.session_state:
+        st.session_state.keyboard_velocity = 95
     if "keyboard_cursor" not in st.session_state:
         st.session_state.keyboard_cursor = 0.0
     if "midi_manager" not in st.session_state:
@@ -1345,6 +1371,26 @@ def _note_to_midi(note_name: str) -> int:
     return pretty_midi.note_name_to_number(note_name)
 
 
+def _note_pitch_name(note_name: str) -> str:
+    return note_name.rstrip("0123456789")
+
+
+@lru_cache(maxsize=48)
+def _pitch_class(note_name: str) -> int:
+    return _note_to_midi(note_name) % 12
+
+
+@lru_cache(maxsize=32)
+def _scale_pitch_classes(key: str, scale: str) -> set[int]:
+    intervals = SCALE_INTERVALS.get(scale.lower(), SCALE_INTERVALS["minor"])
+    root_pitch = _pitch_class(f"{key}4")
+    return {((root_pitch + interval) % 12) for interval in intervals}
+
+
+def _note_in_scale(note_name: str, pitch_classes: set[int]) -> bool:
+    return _pitch_class(note_name) in pitch_classes
+
+
 @lru_cache(maxsize=128)
 def _note_preview_audio(note_name: str, instrument: str) -> bytes | None:
     if not _fluidsynth_available() or not _soundfont_available():
@@ -1420,7 +1466,9 @@ def _ingest_midi_into_timeline(midi_payload: bytes) -> None:
 def _register_keyboard_note(note_name: str, tempo: int) -> None:
     pitch = _note_to_midi(note_name)
     instrument = st.session_state.record_instrument
-    velocity = 95
+    velocity = int(st.session_state.get("keyboard_velocity", 95))
+    velocity = max(1, min(127, velocity))
+    st.session_state.last_pressed_note = note_name
 
     if st.session_state.recording:
         elapsed = time.time() - st.session_state.record_start
@@ -1469,37 +1517,234 @@ def _handle_midi_message(message: MidiMessage, tempo: int) -> None:
     _update_timeline_cursor()
 
 
-def _keyboard_block(tempo: int) -> None:
-    st.markdown("### On-screen keys")
-    st.markdown("Tap notes to sketch ideas or use the record toggle to capture them in time.")
+def _keyboard_block(settings: SessionSettings) -> None:
+    st.markdown("### Virtual keyboard")
+    st.caption("Click keys to play notes, build ideas, and capture takes.")
 
-    if not _fluidsynth_available() or not _soundfont_available():
-        st.caption(
-            "Preview audio requires FluidSynth and a General MIDI soundfont. Install them to hear the on-screen keys "
-            f"or set `{SOUNDFONT_ENV_VAR}` to the path of your .sf2 file."
-        )
+    keyboard_css = """
+    <style>
+    .keyboard-pane {
+        position: relative;
+        padding: 1.75rem;
+        border-radius: 28px;
+        background: linear-gradient(155deg, rgba(24, 21, 44, 0.92), rgba(15, 23, 42, 0.9));
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        box-shadow: 0 22px 48px rgba(15, 23, 42, 0.55);
+    }
+    .keyboard-pane::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at 12% 18%, rgba(56, 189, 248, 0.28), transparent 55%),
+                    radial-gradient(circle at 88% 82%, rgba(147, 51, 234, 0.22), transparent 60%);
+        pointer-events: none;
+        opacity: 0.85;
+    }
+    .keyboard-pane > * {
+        position: relative;
+        z-index: 1;
+    }
+    .keyboard-info-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    .keyboard-info-row .keyboard-last-note {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.35rem 0.85rem;
+        border-radius: 999px;
+        font-size: 0.9rem;
+        letter-spacing: 0.04em;
+        background: rgba(148, 163, 184, 0.18);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        color: rgba(226, 232, 240, 0.85);
+        text-transform: uppercase;
+    }
+    .keyboard-info-row .keyboard-last-note strong {
+        font-size: 1.05rem;
+        color: #f5f3ff;
+        letter-spacing: 0.08em;
+    }
+    .keyboard-info-row .keyboard-last-note.keyboard-last-note--active {
+        background: rgba(14, 165, 233, 0.16);
+        border-color: rgba(56, 189, 248, 0.45);
+        color: rgba(186, 230, 253, 0.95);
+    }
+    .keyboard-info-row .keyboard-scale-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.85rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        background: rgba(129, 140, 248, 0.18);
+        border: 1px solid rgba(129, 140, 248, 0.38);
+        color: rgba(224, 231, 255, 0.92);
+    }
+    .keyboard-info-row .keyboard-scale-pill strong {
+        color: #ede9fe;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+    }
+    .keyboard-keys-row {
+        margin-top: 1.5rem;
+        padding: 1.2rem 1.5rem 1.65rem;
+        border-radius: 22px;
+        background: rgba(15, 23, 42, 0.72);
+        border: 1px solid rgba(100, 116, 139, 0.22);
+        box-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.08);
+    }
+    .keyboard-slider-wrap > div > div {
+        background: transparent !important;
+        padding: 0 !important;
+    }
+    .keyboard-slider-wrap label {
+        font-size: 0.8rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: rgba(226, 232, 240, 0.78);
+    }
+    .keyboard-slider-wrap .stSlider [data-testid="stSlider"] {
+        padding: 0.35rem 0 0;
+    }
+    </style>
+    """
+    st.markdown(keyboard_css, unsafe_allow_html=True)
 
-    keyboard_cols = st.columns(len(KEYBOARD_NOTES))
-    for col, note_name in zip(keyboard_cols, KEYBOARD_NOTES):
-        is_sharp = "#" in note_name
-        button_style = (
-            "background: linear-gradient(180deg, #0f172a, #1e293b); color: #f8fafc; box-shadow: inset 0 -6px 0 rgba(15,23,42,0.8);"
-            if is_sharp
-            else "background: linear-gradient(180deg, #f8fafc, #e2e8f0); color: #020617; box-shadow: inset 0 -6px 0 rgba(148, 163, 184, 0.6);"
+    tonic_name = _note_pitch_name(settings.key)
+    scale_pitch_classes = _scale_pitch_classes(tonic_name, settings.scale)
+    last_pressed = st.session_state.get("last_pressed_note")
+    tempo = settings.tempo
+
+    st.markdown("<div class='keyboard-pane'>", unsafe_allow_html=True)
+
+    info_col, slider_col = st.columns([3, 2])
+    with info_col:
+        note_class = "keyboard-last-note keyboard-last-note--active" if last_pressed else "keyboard-last-note"
+        last_note_markup = (
+            f"<div class='{note_class}'><span>Last note</span> <strong>{last_pressed}</strong></div>"
+            if last_pressed
+            else "<div class='keyboard-last-note'><span>Last note</span> <strong>—</strong></div>"
         )
-        with col:
-            if st.button(note_name, key=f"keyboard-{note_name}", help=f"Add note {note_name}", use_container_width=True):
-                _register_keyboard_note(note_name, tempo)
+        scale_label = settings.scale.replace('_', ' ').title()
+        scale_badge = f"<div class='keyboard-scale-pill'><span>Scale</span> <strong>{tonic_name.upper()} {scale_label}</strong></div>"
+        st.markdown(f"<div class='keyboard-info-row'>{scale_badge}{last_note_markup}</div>", unsafe_allow_html=True)
+    with slider_col:
+        st.markdown("<div class='keyboard-slider-wrap'>", unsafe_allow_html=True)
+        st.session_state.keyboard_velocity = st.slider(
+            "Velocity",
+            min_value=30,
+            max_value=127,
+            value=int(st.session_state.get("keyboard_velocity", 95)),
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='keyboard-keys-row'>", unsafe_allow_html=True)
+
+    def render_key(note_name: str, *, key_type: str, overlay: bool = False) -> None:
+        button_key = f"keyboard-{note_name}"
+        is_in_scale = _note_in_scale(note_name, scale_pitch_classes)
+        is_tonic = _note_pitch_name(note_name) == tonic_name
+        is_active = last_pressed == note_name
+
+        base_style: list[str]
+        border_colour: str
+        box_shadow: str
+
+        if key_type == "white":
+            base_style = [
+                "height: 170px;",
+                "border-radius: 18px;",
+                "background: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);",
+                "color: #0f172a;",
+                "font-weight: 600;",
+                "font-size: 0.95rem;",
+                "display: flex;",
+                "align-items: flex-end;",
+                "justify-content: center;",
+                "padding-bottom: 14px;",
+                "width: 100% !important;",
+                "margin: 0 auto;",
+                "box-shadow: 0 22px 40px rgba(15, 23, 42, 0.5);",
+                "border: 1.5px solid rgba(148, 163, 184, 0.35);",
+            ]
+            border_colour = "rgba(148, 163, 184, 0.35)"
+            box_shadow = "0 22px 40px rgba(15, 23, 42, 0.5)"
+        else:
+            base_style = [
+                "height: 120px;",
+                "border-radius: 14px;",
+                "background: linear-gradient(180deg, #0b1120 0%, #111827 100%);",
+                "color: #e0f2fe;",
+                "font-weight: 600;",
+                "font-size: 0.85rem;",
+                "display: flex;",
+                "align-items: flex-end;",
+                "justify-content: center;",
+                "padding-bottom: 10px;",
+                "width: 74% !important;",
+                "margin: 0 auto;",
+                "margin-bottom: -86px;",
+                "position: relative;",
+                "top: 26px;",
+                "z-index: 4;",
+                "box-shadow: 0 28px 44px rgba(15, 23, 42, 0.65);",
+                "border: 1.5px solid rgba(30, 41, 59, 0.7);",
+            ]
+            if overlay:
+                base_style.append("align-self: center;")
+            border_colour = "rgba(30, 41, 59, 0.7)"
+            box_shadow = "0 28px 44px rgba(15, 23, 42, 0.65)"
+
+        if is_in_scale:
+            border_colour = "rgba(56, 189, 248, 0.75)"
+            box_shadow = "0 26px 44px rgba(56, 189, 248, 0.32)"
+        if is_tonic:
+            border_colour = "rgba(147, 51, 234, 0.85)"
+            box_shadow = "0 28px 46px rgba(147, 51, 234, 0.35)"
+        if is_active:
+            base_style.append("transform: translateY(2px);")
+            box_shadow = "0 30px 50px rgba(59, 130, 246, 0.4)"
+
+        base_style.append(f"border: 1.5px solid {border_colour};")
+        base_style.append(f"box-shadow: {box_shadow};")
+        base_style.append("transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;")
+
         st.markdown(
-            f"<style>div[data-testid='stButton'][key='keyboard-{note_name}'] button {{{button_style} border-radius: 14px; height: 120px;}}</style>",
+            f"<style>div[data-testid='stButton'][key='{button_key}'] button {{{' '.join(base_style)}}}</style>",
             unsafe_allow_html=True,
         )
+
+        if st.button(note_name, key=button_key):
+            _register_keyboard_note(note_name, tempo)
+
+    white_key_groups: list[tuple[str, str | None]] = []
+    for octave in KEYBOARD_OCTAVES:
+        for white_note in octave["white"]:
+            white_key_groups.append((white_note, octave["accidentals"].get(white_note)))
+
+    columns = st.columns(len(white_key_groups), gap="small")
+    for column, (white_note, accidental) in zip(columns, white_key_groups):
+        with column:
+            st.markdown("<div style='position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.4rem;'>", unsafe_allow_html=True)
+            if accidental:
+                render_key(accidental, key_type="black", overlay=True)
+            render_key(white_note, key_type="white")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     preview_placeholder = st.empty()
     preview_payload = st.session_state.pop("keyboard_preview_audio", None)
     if preview_payload:
         preview_placeholder.audio(preview_payload, format="audio/wav")
-
 
 def _midi_block(tempo: int) -> None:
     st.markdown("### USB MIDI input")
@@ -1763,7 +2008,7 @@ def _performance_tab(settings: SessionSettings) -> None:
     st.subheader("Performance desk", divider="rainbow")
     _recording_controls(tempo)
     st.divider()
-    _keyboard_block(tempo)
+    _keyboard_block(settings)
     st.divider()
     _midi_block(tempo)
     st.markdown("</div>", unsafe_allow_html=True)
