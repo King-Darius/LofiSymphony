@@ -1572,6 +1572,52 @@ def _keyboard_block(settings: SessionSettings) -> None:
         border: 1px solid rgba(100, 116, 139, 0.22);
         box-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.08);
     }
+    .keyboard-keys-row [data-testid="column"] {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+    .keyboard-octave {
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+    }
+    .keyboard-octave-label {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.28rem 0.85rem;
+        border-radius: 999px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 0.72rem;
+        font-weight: 600;
+        background: rgba(129, 140, 248, 0.18);
+        border: 1px solid rgba(129, 140, 248, 0.42);
+        color: rgba(224, 231, 255, 0.9);
+        box-shadow: 0 6px 18px rgba(79, 70, 229, 0.25);
+    }
+    .keyboard-key-stack {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.4rem;
+    }
+    @media (max-width: 1100px) {
+        .keyboard-keys-row [data-testid="column"] {
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+        }
+    }
+    @media (max-width: 768px) {
+        .keyboard-keys-row [data-testid="column"] {
+            padding-left: 0.35rem;
+            padding-right: 0.35rem;
+        }
+        .keyboard-octave-label {
+            font-size: 0.68rem;
+            letter-spacing: 0.1em;
+        }
+    }
     .keyboard-slider-wrap > div > div {
         background: transparent !important;
         padding: 0 !important;
@@ -1696,18 +1742,20 @@ def _keyboard_block(settings: SessionSettings) -> None:
         if st.button(note_name, key=button_key):
             _register_keyboard_note(note_name, tempo)
 
-    white_key_groups: list[tuple[str, str | None]] = []
-    for octave in KEYBOARD_OCTAVES:
-        for white_note in octave["white"]:
-            white_key_groups.append((white_note, octave["accidentals"].get(white_note)))
-
-    columns = st.columns(len(white_key_groups), gap="small")
-    for column, (white_note, accidental) in zip(columns, white_key_groups):
+    octave_columns = st.columns(len(KEYBOARD_OCTAVES), gap="large")
+    for column, octave in zip(octave_columns, KEYBOARD_OCTAVES):
         with column:
-            st.markdown("<div style='position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.4rem;'>", unsafe_allow_html=True)
-            if accidental:
-                render_key(accidental, key_type="black", overlay=True)
-            render_key(white_note, key_type="white")
+            st.markdown("<div class='keyboard-octave'>", unsafe_allow_html=True)
+            st.markdown(f"<span class='keyboard-octave-label'>{octave['label']}</span>", unsafe_allow_html=True)
+            key_columns = st.columns(len(octave["white"]), gap="small")
+            for key_column, white_note in zip(key_columns, octave["white"]):
+                with key_column:
+                    st.markdown("<div class='keyboard-key-stack'>", unsafe_allow_html=True)
+                    accidental = octave["accidentals"].get(white_note)
+                    if accidental:
+                        render_key(accidental, key_type="black", overlay=True)
+                    render_key(white_note, key_type="white")
+                    st.markdown("</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
