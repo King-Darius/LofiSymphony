@@ -918,6 +918,18 @@ def _arranger_tracks_map() -> dict[str, dict[str, Any]]:
     return {track["instrument"]: track for track in tracks}
 
 
+def _arranger_effects_map() -> dict[str, list[str]]:
+    tracks = st.session_state.get("arranger_tracks", [])
+    if not tracks:
+        return {}
+    effects: dict[str, list[str]] = {}
+    for track in tracks:
+        selections = track.get("effects") or []
+        if selections:
+            effects[track["instrument"]] = list(selections)
+    return effects
+
+
 def _active_arranger_tracks() -> dict[str, dict[str, Any]]:
     tracks = st.session_state.get("arranger_tracks", [])
     if not tracks:
@@ -2000,6 +2012,7 @@ def _timeline_tab(settings: SessionSettings) -> None:
         audio_segment = midi_to_audio(
             io.BytesIO(midi_bytes.getvalue()),
             add_vinyl_fx=settings.vinyl_fx,
+            instrument_effects=_arranger_effects_map(),
         )
         audio_buffer = io.BytesIO()
         audio_segment.export(audio_buffer, format="wav")
@@ -2275,15 +2288,16 @@ def _generator_tab(settings: SessionSettings) -> None:
             st.session_state.arrangement_sections = None
             _ingest_midi_into_timeline(midi_payload)
             st.session_state.timeline.quantize(0.25)
+            _initialise_arranger_state(st.session_state.arrangement_sections, reset_lanes=True)
             audio_segment = midi_to_audio(
                 io.BytesIO(midi_payload),
                 add_vinyl_fx=settings.vinyl_fx,
+                instrument_effects=_arranger_effects_map(),
             )
             audio_buffer = io.BytesIO()
             audio_segment.export(audio_buffer, format="wav")
             audio_buffer.seek(0)
             st.session_state.generated_audio = audio_buffer.getvalue()
-            _initialise_arranger_state(st.session_state.arrangement_sections, reset_lanes=True)
             st.toast("MIDI idea injected into the timeline ✨")
 
         if st.button("🧱 Generate full arrangement", use_container_width=True):
@@ -2317,15 +2331,16 @@ def _generator_tab(settings: SessionSettings) -> None:
                     [],
                 ),
             }
+            _initialise_arranger_state(st.session_state.arrangement_sections, reset_lanes=True)
             audio_segment = midi_to_audio(
                 io.BytesIO(midi_payload),
                 add_vinyl_fx=settings.vinyl_fx,
+                instrument_effects=_arranger_effects_map(),
             )
             audio_buffer = io.BytesIO()
             audio_segment.export(audio_buffer, format="wav")
             audio_buffer.seek(0)
             st.session_state.generated_audio = audio_buffer.getvalue()
-            _initialise_arranger_state(st.session_state.arrangement_sections, reset_lanes=True)
             st.toast("Structured arrangement added to the timeline 🎼")
 
         metadata = st.session_state.generator_metadata

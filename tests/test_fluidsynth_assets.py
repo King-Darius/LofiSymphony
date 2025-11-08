@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import sys
 import hashlib
 import io
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -28,6 +29,32 @@ def test_iter_bundled_candidates_windows(tmp_path, monkeypatch, fake_vendor_root
     bin_dir = fake_vendor_root / "fluidsynth" / "win-amd64" / "bin"
     bin_dir.mkdir(parents=True)
     exe_path = bin_dir / "fluidsynth.exe"
+    exe_path.write_text("")
+
+    candidates = list(assets.iter_bundled_candidates())
+    assert candidates == [exe_path]
+
+
+def test_iter_bundled_candidates_mac(tmp_path, monkeypatch, fake_vendor_root):
+    monkeypatch.setattr(assets, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(assets, "_platform_tag", lambda: "mac-arm64")
+
+    bin_dir = fake_vendor_root / "fluidsynth" / "mac-arm64" / "bin"
+    bin_dir.mkdir(parents=True)
+    exe_path = bin_dir / "fluidsynth"
+    exe_path.write_text("")
+
+    candidates = list(assets.iter_bundled_candidates())
+    assert candidates == [exe_path]
+
+
+def test_iter_bundled_candidates_linux(tmp_path, monkeypatch, fake_vendor_root):
+    monkeypatch.setattr(assets, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(assets, "_platform_tag", lambda: "linux-x86_64")
+
+    bin_dir = fake_vendor_root / "fluidsynth" / "linux-x86_64" / "bin"
+    bin_dir.mkdir(parents=True)
+    exe_path = bin_dir / "fluidsynth"
     exe_path.write_text("")
 
     candidates = list(assets.iter_bundled_candidates())

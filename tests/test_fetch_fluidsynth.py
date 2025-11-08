@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -19,11 +21,11 @@ def _load_script() -> object:
     return module
 
 
-def test_extract_windows_zip_handles_nested_prefix(tmp_path):
+def test_extract_zip_archive_strips_prefix(tmp_path):
     script = _load_script()
 
     archive = tmp_path / "fluidsynth.zip"
-    nested_prefix = "fluidsynth-2.3.3-win10-x64/"
+    nested_prefix = "fluidsynth-v2.5.1-win10-x64-cpp11/"
 
     with zipfile.ZipFile(archive, "w") as bundle:
         bundle.writestr(nested_prefix + "bin/", "")
@@ -33,7 +35,7 @@ def test_extract_windows_zip_handles_nested_prefix(tmp_path):
     dest = tmp_path / "extracted"
     dest.mkdir()
 
-    script._extract_windows_zip(archive, dest)
+    script._extract_zip_archive(archive, dest, strip_components=1)
 
     exe_path = dest / "bin" / "fluidsynth.exe"
     dll_path = dest / "bin" / "somesynth.dll"
@@ -42,15 +44,20 @@ def test_extract_windows_zip_handles_nested_prefix(tmp_path):
     assert dll_path.read_bytes() == b"dll-data"
 
 
-def test_extract_windows_zip_raises_when_missing_bin(tmp_path):
+def test_extract_tar_archive_handles_strip_components(tmp_path):
     script = _load_script()
 
-    archive = tmp_path / "fluidsynth.zip"
-    with zipfile.ZipFile(archive, "w") as bundle:
-        bundle.writestr("fluidsynth-2.3.3/README.txt", "no bin here")
+    archive = tmp_path / "bundle.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        data = b"exec"
+        info = tarfile.TarInfo("fluid-synth/2.5.1/bin/fluidsynth")
+        info.size = len(data)
+        bundle.addfile(info, io.BytesIO(data))
 
     dest = tmp_path / "extracted"
     dest.mkdir()
 
-    with pytest.raises(RuntimeError, match="bin/ directory"):
-        script._extract_windows_zip(archive, dest)
+    script._extract_tar_archive(archive, dest, strip_components=2)
+
+    exe_path = dest / "bin" / "fluidsynth"
+    assert exe_path.read_bytes() == b"exec"

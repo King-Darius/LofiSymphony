@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import warnings
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence
+from typing import Iterable, List, Mapping, Sequence
 
 import numpy as np
 import pretty_midi
@@ -426,6 +426,7 @@ def midi_to_audio(
     *,
     soundfont: str | None = None,
     add_vinyl_fx: bool = False,
+    instrument_effects: Mapping[str, Sequence[str]] | None = None,
 ) -> AudioSegment:
     """Render a MIDI byte stream to audio using FluidSynth when available."""
 
@@ -459,23 +460,191 @@ def midi_to_audio(
     if fluidsynth_exec is None:
         return _fallback("FluidSynth executable not available.")
 
-    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as midi_file:
-        midi_file.write(midi_payload)
-        midi_path = midi_file.name
-
-    wav_path = midi_path.replace(".mid", ".wav")
-    cmd = [fluidsynth_exec, "-ni", soundfont_path, midi_path, "-F", wav_path, "-r", "44100"]
+    effect_map = _normalise_effects_map(instrument_effects)
 
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        audio = AudioSegment.from_file(wav_path)
+        midi_obj: pretty_midi.PrettyMIDI | None = pretty_midi.PrettyMIDI(io.BytesIO(midi_payload))
+    except Exception:
+        midi_obj = None
+
+    def _render(payload: bytes) -> AudioSegment:
+        return _render_with_fluidsynth(payload, executable=fluidsynth_exec, soundfont=soundfont_path)
+
+    try:
+        if not midi_obj or not _effects_required(midi_obj, effect_map):
+            audio = _render(midi_payload)
+        else:
+            rendered_tracks: list[AudioSegment] = []
+            for index, instrument in enumerate(midi_obj.instruments):
+                resolved_effects = _instrument_effects(instrument, effect_map)
+
+                per_instrument = pretty_midi.PrettyMIDI(io.BytesIO(midi_payload))
+                if index >= len(per_instrument.instruments):
+                    continue
+                solo_instrument = per_instrument.instruments[index]
+                per_instrument.instruments = [solo_instrument]
+
+                solo_buffer = io.BytesIO()
+                per_instrument.write(solo_buffer)
+                solo_payload = solo_buffer.getvalue()
+
+                track_audio = _render(solo_payload)
+                if resolved_effects:
+                    track_audio = _apply_effects_chain(track_audio, resolved_effects)
+                rendered_tracks.append(track_audio)
+
+            if not rendered_tracks:
+                audio = _render(midi_payload)
+            else:
+                rendered_tracks.sort(key=len, reverse=True)
+                mix = rendered_tracks[0]
+                for segment in rendered_tracks[1:]:
+                    mix = mix.overlay(segment)
+                audio = mix
+
         if add_vinyl_fx:
             audio = _add_fx_layer(audio)
         return audio
     except (subprocess.CalledProcessError, FileNotFoundError, OSError, CouldntDecodeError) as exc:
         return _fallback(f"FluidSynth rendering failed ({exc}).")
+
+
+def _render_with_fluidsynth(
+    midi_payload: bytes, *, executable: str, soundfont: str
+) -> AudioSegment:
+    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as midi_file:
+        midi_file.write(midi_payload)
+        midi_path = midi_file.name
+
+    wav_path = midi_path.replace(".mid", ".wav")
+    cmd = [executable, "-ni", soundfont, midi_path, "-F", wav_path, "-r", "44100"]
+
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return AudioSegment.from_file(wav_path)
     finally:
         if os.path.exists(midi_path):
             os.remove(midi_path)
         if os.path.exists(wav_path):
             os.remove(wav_path)
+
+
+def _normalise_effects_map(
+    mapping: Mapping[str, Sequence[str]] | None,
+) -> dict[str, list[str]]:
+    if not mapping:
+        return {}
+
+    normalised: dict[str, list[str]] = {}
+    for label, effects in mapping.items():
+        if not effects:
+            continue
+        trimmed = (label or "").strip()
+        if not trimmed:
+            continue
+        unique_effects = [effect for effect in effects if effect]
+        if not unique_effects:
+            continue
+        base = trimmed.split(" (", 1)[0].strip()
+        for key in {trimmed.lower(), base.lower()}:
+            if key:
+                normalised[key] = list(unique_effects)
+    return normalised
+
+
+def _effects_required(midi_obj: pretty_midi.PrettyMIDI, effect_map: Mapping[str, list[str]]) -> bool:
+    if not effect_map:
+        return False
+    return any(_instrument_effects(instrument, effect_map) for instrument in midi_obj.instruments)
+
+
+def _instrument_effects(
+    instrument: pretty_midi.Instrument, effect_map: Mapping[str, list[str]]
+) -> list[str]:
+    if not effect_map:
+        return []
+
+    label = (instrument.name or "").strip()
+    base_label = label.split(" (", 1)[0].strip() if label else ""
+    candidates = [candidate for candidate in {label.lower(), base_label.lower()} if candidate]
+
+    if not candidates:
+        try:
+            inferred = pretty_midi.program_to_instrument_name(instrument.program)
+        except ValueError:
+            inferred = ""
+        if inferred:
+            candidates.append(inferred.lower())
+        if instrument.is_drum:
+            candidates.append("drums")
+
+    for key in candidates:
+        effects = effect_map.get(key)
+        if effects:
+            return list(effects)
+    return []
+
+
+def _apply_effects_chain(audio: AudioSegment, effects: Sequence[str]) -> AudioSegment:
+    processed = audio
+    for effect in effects:
+        name = (effect or "").strip().lower()
+        if not name:
+            continue
+        if name == "tape warmth":
+            processed = _effect_tape_warmth(processed)
+        elif name == "vinyl crackle":
+            processed = _effect_vinyl_crackle(processed)
+        elif name == "lush chorus":
+            processed = _effect_lush_chorus(processed)
+        elif name == "stereo spread":
+            processed = _effect_stereo_spread(processed)
+        elif name == "dusty reverb":
+            processed = _effect_dusty_reverb(processed)
+        elif name == "lo-fi delay":
+            processed = _effect_lofi_delay(processed)
+    return processed
+
+
+def _effect_tape_warmth(audio: AudioSegment) -> AudioSegment:
+    warmed = audio.low_pass_filter(7600).high_pass_filter(120)
+    softened = warmed.apply_gain(-0.8)
+    harmonic = softened.high_pass_filter(1800).apply_gain(-6)
+    return softened.overlay(harmonic, gain_during_overlay=-3)
+
+
+def _effect_vinyl_crackle(audio: AudioSegment) -> AudioSegment:
+    noise = WhiteNoise().to_audio_segment(duration=len(audio), volume=-30)
+    textured = noise.high_pass_filter(1800).low_pass_filter(7200)
+    return audio.overlay(textured)
+
+
+def _effect_lush_chorus(audio: AudioSegment) -> AudioSegment:
+    wet = audio.low_pass_filter(8400).apply_gain(-4)
+    chorus = wet.overlay(wet, position=18).overlay(wet, position=34)
+    return (audio - 1).overlay(chorus, gain_during_overlay=-2)
+
+
+def _effect_stereo_spread(audio: AudioSegment) -> AudioSegment:
+    stereo = _ensure_stereo(audio)
+    widened = stereo.pan(-0.18)
+    return widened.overlay(stereo.pan(0.18), gain_during_overlay=-3)
+
+
+def _effect_dusty_reverb(audio: AudioSegment) -> AudioSegment:
+    tail = audio.low_pass_filter(6400).apply_gain(-10).fade_in(60).fade_out(900)
+    return audio.overlay(tail, position=120)
+
+
+def _effect_lofi_delay(audio: AudioSegment) -> AudioSegment:
+    echo = audio.low_pass_filter(5200).apply_gain(-8)
+    staged = audio
+    for offset, attenuation in ((180, -2), (360, -5), (540, -8)):
+        staged = staged.overlay(echo + attenuation, position=offset)
+    return staged
+
+
+def _ensure_stereo(audio: AudioSegment) -> AudioSegment:
+    if audio.channels == 2:
+        return audio
+    return AudioSegment.from_mono_audiosegments(audio, audio)

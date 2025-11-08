@@ -37,6 +37,16 @@ def _platform_tag() -> str | None:
     if system == "windows":
         if machine in {"amd64", "x86_64"}:
             return "win-amd64"
+    if system == "darwin":
+        if machine in {"arm64", "aarch64"}:
+            return "mac-arm64"
+        if machine in {"x86_64", "amd64"}:
+            return "mac-x86_64"
+    if system == "linux":
+        if machine in {"x86_64", "amd64"}:
+            return "linux-x86_64"
+        if machine in {"arm64", "aarch64"}:
+            return "linux-arm64"
     return None
 
 
