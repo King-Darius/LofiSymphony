@@ -274,24 +274,32 @@ def ensure_fluidsynth_bundle(*, verbose: bool = True) -> Path | None:
 
         extract_dir = Path(tmpdir) / "extracted"
         extract_dir.mkdir(parents=True, exist_ok=True)
+        strip_components = int(asset.get("strip_components", 0))
+
         if kind == "zip":
             _extract_zip_archive(
                 archive_path,
                 extract_dir,
-                strip_components=int(asset.get("strip_components", 0)),
+                strip_components=strip_components,
             )
         else:
             _extract_tar_archive(
                 archive_path,
                 extract_dir,
-                strip_components=int(asset.get("strip_components", 0)),
+                strip_components=strip_components,
             )
 
         archive_subdir = asset.get("archive_subdir")
-        source_root = extract_dir if not archive_subdir else extract_dir / archive_subdir
+        if archive_subdir and strip_components == 0:
+            source_root = extract_dir / archive_subdir
+        else:
+            source_root = extract_dir
 
         if not source_root.exists():
-            raise RuntimeError(f"FluidSynth archive did not contain expected path {archive_subdir}")
+            expected_path = archive_subdir if archive_subdir and strip_components == 0 else "."
+            raise RuntimeError(
+                f"FluidSynth archive did not contain expected path {expected_path}"
+            )
 
         if target_dir.exists():
             shutil.rmtree(target_dir)
