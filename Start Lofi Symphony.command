@@ -27,5 +27,15 @@ MSG
   exit 1
 fi
 
-"$PYTHON_BIN" launcher.py "$@"
+status=0
+if "$PYTHON_BIN" launcher.py "$@"; then
+  echo
+  echo "LofiSymphony closed. You can run this helper again any time."
+else
+  status=$?
+  echo
+  echo "Launch failed. Review the messages above for details."
+fi
+
 read -rp $'\nPress Return to close this window…' _
+exit "$status"
