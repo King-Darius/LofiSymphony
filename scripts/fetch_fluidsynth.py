@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -192,32 +193,79 @@ def _extract_zip_archive(archive: Path, dest: Path, *, strip_components: int = 0
 
 
 def _extract_tar_archive(archive: Path, dest: Path, *, strip_components: int = 0) -> None:
-    def _safe_join(member_name: str) -> Path:
-        target = dest / member_name
+    root = dest.resolve()
+
+    def _safe_join(relative: PurePosixPath) -> Path:
+        target = dest.joinpath(*relative.parts)
         resolved = target.resolve()
-        if dest not in resolved.parents and resolved != dest.resolve():
+        if root not in resolved.parents and resolved != root:
             raise RuntimeError("Unsafe path detected in FluidSynth archive extraction")
         return target
+
+    def _normalized_parts(raw: str) -> list[str]:
+        path = PurePosixPath(raw)
+        if path.is_absolute():
+            raise RuntimeError("Absolute paths are not allowed in FluidSynth archives")
+
+        parts: list[str] = []
+        for part in path.parts:
+            if part in {"", "."}:
+                continue
+            if part == "..":
+                raise RuntimeError("Parent path components are not allowed in FluidSynth archives")
+            parts.append(part)
+        return parts
 
     with tarfile.open(archive, "r:*") as bundle:
         members = bundle.getmembers()
         if not members:
             raise RuntimeError("FluidSynth archive was empty")
+
+        pending_symlink_copies: list[tuple[Path, str]] = []
+        pending_hardlink_copies: list[tuple[Path, list[str]]] = []
+
         for member in members:
-            path_parts = Path(member.name).parts
+            parts = _normalized_parts(member.name)
             if strip_components:
-                if len(path_parts) <= strip_components:
+                if len(parts) <= strip_components:
                     continue
-                member.name = str(Path(*path_parts[strip_components:]))
-            else:
-                member.name = str(Path(*path_parts))
-            if not member.name:
+                parts = parts[strip_components:]
+            if not parts:
                 continue
-            target_path = _safe_join(member.name)
+
+            relative_name = PurePosixPath(*parts)
+            target_path = _safe_join(relative_name)
+
             if member.isdir():
                 target_path.mkdir(parents=True, exist_ok=True)
                 continue
+
             target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if member.issym():
+                link_parts = _normalized_parts(member.linkname)
+                if strip_components and len(link_parts) > strip_components:
+                    link_parts = link_parts[strip_components:]
+                link_target = PurePosixPath(*link_parts).as_posix() if link_parts else member.linkname
+                if not link_target:
+                    continue
+                if target_path.exists() or target_path.is_symlink():
+                    target_path.unlink()
+                try:
+                    target_path.symlink_to(link_target)
+                except (AttributeError, NotImplementedError, OSError):
+                    pending_symlink_copies.append((target_path, link_target))
+                continue
+
+            if member.islnk():
+                link_parts = _normalized_parts(member.linkname)
+                if strip_components and len(link_parts) > strip_components:
+                    link_parts = link_parts[strip_components:]
+                if not link_parts:
+                    raise RuntimeError("FluidSynth archive contained an empty hard link reference")
+                pending_hardlink_copies.append((target_path, link_parts))
+                continue
+
             extracted = bundle.extractfile(member)
             if extracted is None:
                 continue
@@ -225,6 +273,41 @@ def _extract_tar_archive(archive: Path, dest: Path, *, strip_components: int = 0
                 shutil.copyfileobj(extracted, out_file)
             if member.mode:
                 target_path.chmod(member.mode)
+
+        def _assert_within_root(candidate: Path) -> Path:
+            resolved = candidate.resolve()
+            if root not in resolved.parents and resolved != root:
+                raise RuntimeError("Link target resolved outside extraction directory")
+            return resolved
+
+        for target_path, link_target in pending_symlink_copies:
+            fallback = target_path.parent / link_target
+            fallback_resolved = _assert_within_root(fallback)
+            if not fallback_resolved.exists():
+                raise RuntimeError(
+                    f"FluidSynth archive symlink target {link_target!r} missing during extraction"
+                )
+            if target_path.exists() or target_path.is_symlink():
+                if target_path.is_dir():
+                    shutil.rmtree(target_path)
+                else:
+                    target_path.unlink()
+            if fallback_resolved.is_dir():
+                shutil.copytree(fallback_resolved, target_path)
+            else:
+                shutil.copy2(fallback_resolved, target_path)
+
+        for target_path, link_parts in pending_hardlink_copies:
+            source = dest.joinpath(*link_parts)
+            source_resolved = _assert_within_root(source)
+            if not source_resolved.exists():
+                raise RuntimeError(
+                    f"FluidSynth archive hard link target {'/'.join(link_parts)!r} missing during extraction"
+                )
+            if source_resolved.is_dir():
+                shutil.copytree(source_resolved, target_path)
+            else:
+                shutil.copy2(source_resolved, target_path)
 
 
 def _write_version_marker(dest: Path, *, version: str) -> None:

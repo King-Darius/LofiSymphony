@@ -61,3 +61,81 @@ def test_extract_tar_archive_handles_strip_components(tmp_path):
 
     exe_path = dest / "bin" / "fluidsynth"
     assert exe_path.read_bytes() == b"exec"
+
+
+def test_extract_tar_archive_preserves_symlinks(tmp_path):
+    script = _load_script()
+
+    archive = tmp_path / "bundle.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        target_data = b"shared-lib"
+        lib_real = tarfile.TarInfo("fluid-synth/2.5.1/lib/libfluidsynth.so.3.5.0")
+        lib_real.size = len(target_data)
+        bundle.addfile(lib_real, io.BytesIO(target_data))
+
+        lib_version = tarfile.TarInfo("fluid-synth/2.5.1/lib/libfluidsynth.so.3")
+        lib_version.type = tarfile.SYMTYPE
+        lib_version.linkname = "libfluidsynth.so.3.5.0"
+        bundle.addfile(lib_version)
+
+        lib_short = tarfile.TarInfo("fluid-synth/2.5.1/lib/libfluidsynth.so")
+        lib_short.type = tarfile.SYMTYPE
+        lib_short.linkname = "libfluidsynth.so.3"
+        bundle.addfile(lib_short)
+
+    dest = tmp_path / "extract"
+    dest.mkdir()
+
+    script._extract_tar_archive(archive, dest, strip_components=2)
+
+    base = dest / "lib"
+    real_path = base / "libfluidsynth.so.3.5.0"
+    version_link = base / "libfluidsynth.so.3"
+    short_link = base / "libfluidsynth.so"
+
+    assert real_path.read_bytes() == b"shared-lib"
+    assert version_link.exists()
+    assert short_link.exists()
+
+    if version_link.is_symlink():
+        assert version_link.readlink() == Path("libfluidsynth.so.3.5.0")
+    else:
+        assert version_link.read_bytes() == real_path.read_bytes()
+
+    if short_link.is_symlink():
+        assert short_link.readlink() == Path("libfluidsynth.so.3")
+    else:
+        assert short_link.read_bytes() == real_path.read_bytes()
+
+
+def test_extract_tar_archive_symlink_fallback_copies_after_members(tmp_path, monkeypatch):
+    script = _load_script()
+
+    archive = tmp_path / "bundle.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        lib_version = tarfile.TarInfo("fluid-synth/2.5.1/lib/libfluidsynth.so.3")
+        lib_version.type = tarfile.SYMTYPE
+        lib_version.linkname = "libfluidsynth.so.3.5.0"
+        bundle.addfile(lib_version)
+
+        target_data = b"shared-lib"
+        lib_real = tarfile.TarInfo("fluid-synth/2.5.1/lib/libfluidsynth.so.3.5.0")
+        lib_real.size = len(target_data)
+        bundle.addfile(lib_real, io.BytesIO(target_data))
+
+    dest = tmp_path / "extract"
+    dest.mkdir()
+
+    def _deny_symlinks(self, target, target_is_directory=False):
+        raise OSError("symlinks disabled")
+
+    monkeypatch.setattr(script.Path, "symlink_to", _deny_symlinks, raising=False)
+
+    script._extract_tar_archive(archive, dest, strip_components=2)
+
+    base = dest / "lib"
+    target = base / "libfluidsynth.so.3"
+    real_path = base / "libfluidsynth.so.3.5.0"
+
+    assert target.exists()
+    assert target.read_bytes() == real_path.read_bytes() == b"shared-lib"
